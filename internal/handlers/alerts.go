@@ -88,8 +88,12 @@ func Alerts(c *gin.Context) {
         return
     }
 
+	if len(users) == 0 {
+		users = []models.User{}
+	} 
+
     c.JSON(http.StatusOK, gin.H{
-        "data":      users,
+        "data":     users ,
         "totalRowCount":  count,
     })
 
