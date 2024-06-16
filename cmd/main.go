@@ -32,6 +32,9 @@ func main() {
 	protected.Use(auth.AuthMiddleware())
 	{
 		protected.POST("/alertrules", handlers.New)
+		protected.GET("/alertrules/:id", handlers.Edit)
+		protected.GET("/alertrules", handlers.Index)
+
 		protected.GET("/resource", handlers.ProtectedResource)
 	}
 
