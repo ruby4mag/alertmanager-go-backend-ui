@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
-	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
+	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"github.com/gin-gonic/gin"
+	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
+	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
 )
 
 
@@ -66,7 +66,7 @@ func Alerts(c *gin.Context) {
         }
         findOptions.SetSort(sortFields)
     }
-	collection := db.GetCollection("users")
+	collection := db.GetCollection("alerts")
 
 	cursor, err := collection.Find(ctx, filter, findOptions)
     if err != nil {
@@ -74,7 +74,7 @@ func Alerts(c *gin.Context) {
         return
     }
 
-    var users []models.User
+    var users []models.DbAlert
     if err := cursor.All(ctx, &users); err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -89,7 +89,7 @@ func Alerts(c *gin.Context) {
     }
 
 	if len(users) == 0 {
-		users = []models.User{}
+		users = []models.DbAlert{}
 	} 
 
     c.JSON(http.StatusOK, gin.H{

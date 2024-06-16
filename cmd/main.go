@@ -28,9 +28,10 @@ func main() {
 	r.GET("/alerts", handlers.Alerts)
 
 
-	protected := r.Group("/protected")
+	protected := r.Group("/api")
 	protected.Use(auth.AuthMiddleware())
 	{
+		protected.POST("/alertrules", handlers.New)
 		protected.GET("/resource", handlers.ProtectedResource)
 	}
 
