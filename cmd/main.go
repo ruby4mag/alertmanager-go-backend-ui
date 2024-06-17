@@ -33,6 +33,7 @@ func main() {
 	{
 		protected.POST("/alertrules", handlers.New)
 		protected.GET("/alertrules/:id", handlers.Edit)
+		protected.PUT("/alertrules/:id", handlers.Update)
 		protected.GET("/alertrules", handlers.Index)
 
 		protected.GET("/resource", handlers.ProtectedResource)

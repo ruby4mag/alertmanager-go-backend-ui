@@ -65,8 +65,9 @@ func Index(c *gin.Context) {
     c.JSON(http.StatusOK, records)
 }
 
-// Handler function to fetch all records
+// Handler function to get a record to edit.
 func Edit(c *gin.Context) {
+
     id := c.Param("id")
     // Convert string ID to BSON ObjectID
     objectID, err := primitive.ObjectIDFromHex(id)
@@ -95,5 +96,36 @@ func Edit(c *gin.Context) {
 
     c.JSON(http.StatusOK, record)
 
+}
+
+// Handler function to update a record.
+func Update(c *gin.Context) {
+    var alertRule  models.DbAlertRule
+    if err := c.ShouldBindJSON(&alertRule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+    id := c.Param("id")
+    // Convert string ID to BSON ObjectID
+    objectID, err := primitive.ObjectIDFromHex(id)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"message": "Invalid ID format"})
+        return
+    }
+
+    collection := db.GetCollection("alertrules")
+	updatefilter := bson.M{"_id": objectID }
+    // Prepare the update document using the $set operator
+	update := bson.M{"$set": alertRule}
+
+    updateResult , updateerr := collection.UpdateOne(context.TODO(), updatefilter, update)
+    if updateerr != nil {
+        panic(updateerr)
+    }
+    if updateResult.ModifiedCount > 0 {
+        fmt.Printf("Matched %v documents and updated %v documents.\n", updateResult.MatchedCount, updateResult.ModifiedCount)
+    }
+	c.JSON(http.StatusOK, gin.H{"modified": updateResult.ModifiedCount})
 }
 
