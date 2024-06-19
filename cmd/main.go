@@ -34,6 +34,16 @@ func main() {
 		protected.GET("/alertrules/:id", handlers.Edit)
 		protected.PUT("/alertrules/:id", handlers.Update)
 
+		protected.GET("/healrules", handlers.IndexHeal)
+		protected.POST("/healrules", handlers.NewHeal)
+		protected.GET("/healrules/:id", handlers.EditHeal)
+		protected.PUT("/healrules/:id", handlers.UpdateHeal)
+
+		protected.GET("/notifyrules", handlers.IndexNotify)
+		protected.POST("/notifyrules", handlers.NewNotify)
+		protected.GET("/notifyrules/:id", handlers.EditNotify)
+		protected.PUT("/notifyrules/:id", handlers.UpdateNotify)
+
 		protected.GET("/alerts", handlers.Alerts)
 		protected.GET("/alerts/:id", handlers.View)
 		protected.POST("/alerts/:id/comment", handlers.AddComment)
