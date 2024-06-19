@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
+    "time"
 
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
@@ -128,4 +128,12 @@ func Update(c *gin.Context) {
     }
 	c.JSON(http.StatusOK, gin.H{"modified": updateResult.ModifiedCount})
 }
+
+
+
+
+
+
+
+
 

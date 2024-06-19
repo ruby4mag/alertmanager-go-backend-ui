@@ -12,4 +12,6 @@ type DbAlertRule struct {
 	Order				int  				`bson:"order" json:"order"`
 	SetField			string				`bson:"setfield" json:"setfield"`
 	SetValue			string				`bson:"setvalue" json:"setvalue"`
+	
 }
+

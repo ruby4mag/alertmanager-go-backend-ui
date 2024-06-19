@@ -13,8 +13,8 @@ import (
 func main() {
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		AllowAllOrigins: true,
-		//AllowOrigins: []string{"http://192.168.1.201:3000"},
+		//AllowAllOrigins: true,
+		AllowOrigins: []string{"http://192.168.1.201:3000"},
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{"Origin","Authorization","X-Requested-With", "Content-Type", "Accept"},
 		ExposeHeaders: []string{"Content-Length"},
@@ -25,16 +25,18 @@ func main() {
 	r.POST("/register", handlers.Register)
 	r.POST("/login", handlers.Login)
 	r.POST("/refresh", handlers.RefreshToken)
-	r.GET("/alerts", handlers.Alerts)
-
 
 	protected := r.Group("/api")
 	protected.Use(auth.AuthMiddleware())
 	{
+		protected.GET("/alertrules", handlers.Index)
 		protected.POST("/alertrules", handlers.New)
 		protected.GET("/alertrules/:id", handlers.Edit)
 		protected.PUT("/alertrules/:id", handlers.Update)
-		protected.GET("/alertrules", handlers.Index)
+
+		protected.GET("/alerts", handlers.Alerts)
+		protected.GET("/alerts/:id", handlers.View)
+		protected.POST("/alerts/:id/comment", handlers.AddComment)
 
 		protected.GET("/resource", handlers.ProtectedResource)
 	}

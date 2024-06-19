@@ -45,5 +45,13 @@ type DbAlert struct {
 	AlertCount		int					`json:"alertCount"`
 	AlertDropped	string				`json:"alertDropped"`
 	AdditionalDetails	map[string]interface{}			`json:"additionalDetails"`
+	WorkLogs			[]WorkLog			`bson:"worklogs" json:"worklogs`
+}
+
+type WorkLog struct {
+    ID        primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
+    Author    string             `bson:"author" json:"author"`
+    Comment   string             `bson:"comment" json:"comment"`
+    CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
 }
 

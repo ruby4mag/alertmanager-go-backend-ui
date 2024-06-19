@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
@@ -11,9 +14,8 @@ import (
 
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
-
-
 
 func Alerts(c *gin.Context) {
 
@@ -27,12 +29,10 @@ func Alerts(c *gin.Context) {
 		Desc bool   `json:"desc"`
 	}
 
-
 	start, _ := strconv.Atoi(c.DefaultQuery("start", "0"))
     size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
     globalFilter := c.Query("globalFilter")
     sortQuery := c.Query("sorting")
-
 
 	var filters []Filter
     _ = json.Unmarshal([]byte(c.Query("filters")), &filters)
@@ -74,13 +74,11 @@ func Alerts(c *gin.Context) {
         return
     }
 
-    var users []models.DbAlert
-    if err := cursor.All(ctx, &users); err != nil {
+    var alerts []models.DbAlert
+    if err := cursor.All(ctx, &alerts); err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
-
-
 
     count, err := collection.CountDocuments(ctx, filter)
     if err != nil {
@@ -88,25 +86,95 @@ func Alerts(c *gin.Context) {
         return
     }
 
-	if len(users) == 0 {
-		users = []models.DbAlert{}
+	if len(alerts) == 0 {
+		alerts = []models.DbAlert{}
 	} 
 
     c.JSON(http.StatusOK, gin.H{
-        "data":     users ,
+        "data":     alerts ,
         "totalRowCount":  count,
     })
+}
+
+func AddComment(c *gin.Context) {
+
+    id := c.Param("id")
+    // Convert string ID to BSON ObjectID
+    objectID, err := primitive.ObjectIDFromHex(id)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"message": "Invalid ID format"})
+        return
+    }
+    collection := db.GetCollection("alerts")
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    cur, err := collection.Find(ctx, bson.M{})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    defer cur.Close(ctx)
+
+    var newComment models.WorkLog
+    if err := c.ShouldBindJSON(&newComment); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    username, exists := c.Get("username")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+    newComment.ID = primitive.NewObjectID()
+    newComment.CreatedAt = time.Now()
+    newComment.Author = username.(string)
+
+    filter := bson.M{"_id": objectID}
+    update := bson.M{"$push": bson.M{"worklogs": newComment}}
+
+    _, err = collection.UpdateOne(context.TODO(), filter, update)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, newComment)
+}
 
 
+// Handler function to get a record to edit.
+func View(c *gin.Context) {
 
+    id := c.Param("id")
+    // Convert string ID to BSON ObjectID
+    objectID, err := primitive.ObjectIDFromHex(id)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"message": "Invalid ID format"})
+        return
+    }
+    collection := db.GetCollection("alerts")
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
 
+    cur, err := collection.Find(ctx, bson.M{})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    defer cur.Close(ctx)
 
+    var record models.DbAlert
+    err1 := collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&record)
+    if err1 != nil {
+        fmt.Println("Error is ", err1)
+        c.JSON(http.StatusNotFound, gin.H{"message": "Item not found"})
+        return
+    }
 
+    c.JSON(http.StatusOK, record)
 
-
-
-	/////////////////////////////////////////////
-
-   
 }
 
