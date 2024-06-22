@@ -100,7 +100,7 @@ func EditNotify(c *gin.Context) {
 
 // Handler function to update a record.
 func UpdateNotify(c *gin.Context) {
-    var notifyRule  models.DbAlertRule
+    var notifyRule  models.DbNotifyRule
     if err := c.ShouldBindJSON(&notifyRule); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

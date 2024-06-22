@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -68,6 +69,7 @@ func Login(c *gin.Context) {
     }
 
     user, err := models.FindUserByUsername(credentials.Username)
+    fmt.Println(user)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
         return
@@ -98,6 +100,8 @@ func Login(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{
         "token":         jwtToken,
         "refresh_token": refreshToken,
+        "username" : "Magin",
+        "role" : user.Role,
     })
 }
 
@@ -129,4 +133,11 @@ func RefreshToken(c *gin.Context) {
 func ProtectedResource(c *gin.Context) {
 	username := c.MustGet("username").(string)
 	c.JSON(http.StatusOK, gin.H{"message": "Hello " + username})
+}
+
+func GetPermissions(c *gin.Context){
+    permissions := make(map[string]interface{})
+    permissions["admin"] = []string{"NotifyRuleEdit", "AlertRuleEdit","TagRuleEdit"}
+    permissions["user"] = []string{}
+    c.JSON(http.StatusOK, gin.H{"permissions": permissions })
 }

@@ -25,10 +25,13 @@ func main() {
 	r.POST("/register", handlers.Register)
 	r.POST("/login", handlers.Login)
 	r.POST("/refresh", handlers.RefreshToken)
+	r.POST("/alerts/callback", handlers.AlertCallback)
 
 	protected := r.Group("/api")
 	protected.Use(auth.AuthMiddleware())
 	{
+		protected.GET("/permissions", handlers.GetPermissions)
+		
 		protected.GET("/alertrules", handlers.Index)
 		protected.POST("/alertrules", handlers.New)
 		protected.GET("/alertrules/:id", handlers.Edit)
@@ -43,6 +46,11 @@ func main() {
 		protected.POST("/notifyrules", handlers.NewNotify)
 		protected.GET("/notifyrules/:id", handlers.EditNotify)
 		protected.PUT("/notifyrules/:id", handlers.UpdateNotify)
+
+		protected.GET ("/tagrules", handlers.IndexTag)
+		protected.POST("/tagrules", handlers.NewTag)
+		protected.GET("/tagrules/:id", handlers.EditTag)
+		protected.PUT("/tagrules/:id", handlers.UpdateTag)
 
 		protected.GET("/alerts", handlers.Alerts)
 		protected.GET("/alerts/:id", handlers.View)

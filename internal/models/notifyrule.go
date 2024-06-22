@@ -11,6 +11,7 @@ type DbNotifyRule struct {
 	RuleObject			string  			`bson:"ruleobject" json:"ruleobject"`
 	Order				int  				`bson:"order" json:"order"`
 	PayLoad				string				`bson:"payload" json:"payload"`
+	EndPoint			string 				`bson:"endpoint" json:"endpoint"`
 	
 }
 

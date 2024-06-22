@@ -24,28 +24,33 @@ func (ct *CustomTime) UnmarshalJSON(b []byte) error {
     ct.Time = t
     return nil
 }
-
+// 
 type DbAlert struct {
 	ID 				primitive.ObjectID `bson:"_id,omitempty"`
 	Entity			string 				`json:"entity"`
-	AlertFirstTime	CustomTime 			`json:"alertTime"`
-	AlertLastTime	CustomTime  		`json:"alertLastTime"`
-	AlertClearTime	CustomTime  		`json:"alertClearTime"`
-	AlertSource		string 				`json:"alertSource"`
-	ServiceName 	string 				`json:"serviceName"`
-	AlertSummary	string 				`json:"alertSummary"`
-	AlertStatus		string 				`json:"alertStatus"`
-	AlertNotes		string 				`json:"alertNotes"`
-	AlertAcked		string 				`json:"alertAcked"`
+	AlertFirstTime	CustomTime 			`json:"alertfirsttime"`
+	AlertLastTime	CustomTime  		`json:"alertlasttime"`
+	AlertClearTime	CustomTime  		`json:"alertcleartime"`
+	AlertSource		string 				`json:"alertsource"`
+	ServiceName 	string 				`json:"servicename"`
+	AlertSummary	string 				`json:"alertsummary"`
+	AlertStatus		string 				`json:"alertstatus"`
+	AlertNotes		string 				`json:"alertnotes"`
+	AlertAcked		string 				`json:"alertacked"`
 	Severity		string 				`json:"severity"`
-	AlertId			string				`json:"alertId"`
-	AlertPriority	string				`json:"alertPriority"`
-	IpAddress		string				`json:"ipAddress"`
-	AlertType		string				`json:"alertType"`
-	AlertCount		int					`json:"alertCount"`
-	AlertDropped	string				`json:"alertDropped"`
-	AdditionalDetails	map[string]interface{}			`json:"additionalDetails"`
-	WorkLogs			[]WorkLog			`bson:"worklogs" json:"worklogs`
+	AlertId			string				`json:"alertid"`
+	AlertPriority	string				`json:"alertpriority"`
+	IpAddress		string				`json:"ipaddress"`
+	AlertType		string				`json:"alerttype"`
+	AlertCount		int					`json:"alertcount"`
+	AlertDropped	string				`json:"alertdropped"`
+	AdditionalDetails	map[string]interface{}			`json:"additionaldetails"`
+	WorkLogs		[]WorkLog			`json:"worklogs"`
+	GroupIdentifier	string				`json:"groupidentifier"`
+	Grouped 		bool				`json:"grouped"`
+	GroupIncidentId	string				`json:"groupincidentid"`	
+	GroupAlerts		[]primitive.ObjectID			`json:"groupalerts"`
+	Parent			bool				`json:"parent"`
 }
 
 type WorkLog struct {

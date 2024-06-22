@@ -40,7 +40,8 @@ func Alerts(c *gin.Context) {
     var sorting []Sorting
     _ = json.Unmarshal([]byte(sortQuery), &sorting)
 
-    filter := bson.M{}
+    filter := bson.M{"grouped" : false}
+    // filter["grouped"] = bson.M{"grouped" : true}
     if globalFilter != "" {
         filter["$or"] = []bson.M{
             {"name": bson.M{"$regex": globalFilter, "$options": "i"}},
@@ -176,5 +177,36 @@ func View(c *gin.Context) {
 
     c.JSON(http.StatusOK, record)
 
+}
+
+// Handler function to update a record from callback.
+func AlertCallback(c *gin.Context) {
+    var callbackData map[string]interface{}
+    if err := c.ShouldBindJSON(&callbackData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+    id := callbackData["mongoID"].(string)
+    // Convert string ID to BSON ObjectID
+    objectID, err := primitive.ObjectIDFromHex(id)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"message": "Invalid ID format"})
+        return
+    }
+
+    collection := db.GetCollection("alerts")
+	updatefilter := bson.M{"_id": objectID }
+    // Prepare the update document using the $set operator
+	update := bson.M{"$set":  bson.M{"additionalDetails.ticket": callbackData["ticketNumber"].(string)}}
+
+    updateResult , updateerr := collection.UpdateOne(context.TODO(), updatefilter, update)
+    if updateerr != nil {
+        panic(updateerr)
+    }
+    if updateResult.ModifiedCount > 0 {
+        fmt.Printf("Matched %v documents and updated %v documents.\n", updateResult.MatchedCount, updateResult.ModifiedCount)
+    }
+	c.JSON(http.StatusOK, gin.H{"modified": updateResult.ModifiedCount})
 }
 
