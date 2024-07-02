@@ -11,10 +11,11 @@ import (
 )
 
 func main() {
+	const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		//AllowAllOrigins: true,
-		AllowOrigins: []string{"http://192.168.1.201:3000"},
+		AllowAllOrigins: true,
+		//AllowOrigins: []string{"http://192.168.1.201:3000"},
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{"Origin","Authorization","X-Requested-With", "Content-Type", "Accept"},
 		ExposeHeaders: []string{"Content-Length"},
@@ -53,8 +54,13 @@ func main() {
 		protected.PUT("/tagrules/:id", handlers.UpdateTag)
 
 		protected.GET("/alerts", handlers.Alerts)
+		protected.POST("/alerts/:id/notify/:notificationid", handlers.Notify)
+
 		protected.GET("/alerts/:id", handlers.View)
 		protected.POST("/alerts/:id/comment", handlers.AddComment)
+		protected.POST("/alerts/:id/acknowledge", handlers.Acknowledge)
+		protected.POST("/alerts/:id/unacknowledge", handlers.Unacknowledge)
+		protected.POST("/alerts/:id/clear", handlers.Clear)
 
 		protected.GET("/resource", handlers.ProtectedResource)
 	}

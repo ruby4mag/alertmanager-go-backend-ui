@@ -26,7 +26,7 @@ func (ct *CustomTime) UnmarshalJSON(b []byte) error {
 }
 // 
 type DbAlert struct {
-	ID 				primitive.ObjectID `bson:"_id,omitempty"`
+	ID 				primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
 	Entity			string 				`json:"entity"`
 	AlertFirstTime	CustomTime 			`json:"alertfirsttime"`
 	AlertLastTime	CustomTime  		`json:"alertlasttime"`
@@ -51,6 +51,8 @@ type DbAlert struct {
 	GroupIncidentId	string				`json:"groupincidentid"`	
 	GroupAlerts		[]primitive.ObjectID			`json:"groupalerts"`
 	Parent			bool				`json:"parent"`
+	ChildAlerts		[]DbAlert			`json:"childalerts"`
+	AlertDestination	string			`json:"alertdestination"`
 }
 
 type WorkLog struct {
