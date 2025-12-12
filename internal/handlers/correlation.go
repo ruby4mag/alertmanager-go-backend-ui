@@ -1,210 +1,317 @@
 package handlers
 
 import (
-    "context"
-    "fmt"
-    "net/http"
-    "time"
+	"context"
+	"fmt"
 	"log"
+	"net/http"
+	"time"
 
-    "github.com/gin-gonic/gin"
-    "github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
-    "go.mongodb.org/mongo-driver/bson"
-    "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/gin-gonic/gin"
+	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
+	"go.mongodb.org/mongo-driver/bson"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 )
 
 type AlertInfo struct {
-    HasAlert bool   `json:"has_alert"`
-    Severity string `json:"severity,omitempty"`
+	HasAlert bool   `json:"has_alert"`
+	Severity string `json:"severity,omitempty"`
 }
 
 type Node struct {
-    Name     string `json:"name"`
-    HasAlert bool   `json:"has_alert"`
-    Severity string `json:"severity,omitempty"`
+	Name     string `json:"name"`
+	HasAlert bool   `json:"has_alert"`
+	Severity string `json:"severity,omitempty"`
 }
 
 type Edge struct {
-    Source string `json:"source"`
-    Target string `json:"target"`
-    Type   string `json:"type"`
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Type   string `json:"type"`
 }
 
 type GraphResponse struct {
-    Root  string `json:"root"`
-    Nodes []Node `json:"nodes"`
-    Edges []Edge `json:"edges"`
-}
-
-// ----------------------------
-// Connect to Neo4j
-// ----------------------------
-func init() {
-    var err error
-    neo4jDriver, err = neo4j.NewDriverWithContext(
-        "bolt://192.168.1.201:7687",
-        neo4j.BasicAuth("neo4j", "kl8j2300", ""),
-    )
-    if err != nil {
-        log.Fatal("Neo4j Connection Error:", err)
-    }
+	Root  string `json:"root"`
+	Nodes []Node `json:"nodes"`
+	Edges []Edge `json:"edges"`
 }
 
 var neo4jDriver neo4j.DriverWithContext
 
-// Handler function to fetch entity graph
+func init() {
+	var err error
+	neo4jDriver, err = neo4j.NewDriverWithContext(
+		"bolt://192.168.1.201:7687",
+		neo4j.BasicAuth("neo4j", "kl8j2300", ""),
+	)
+	if err != nil {
+		log.Fatalf("Neo4j connection failed: %v", err)
+	}
+}
+
 func HandleEntityGraph(c *gin.Context) {
-    entity := c.Param("name")
+	root := c.Param("name")
 
-    graph, err := BuildEntityGraph(entity)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
+	graph, err := BuildEntityGraph(root)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-    c.JSON(http.StatusOK, graph)
+	c.JSON(http.StatusOK, graph)
 }
 
-func BuildEntityGraph(entity string) (*GraphResponse, error) {
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-    defer cancel()
+// -----------------------------------------------------------------------------
+// MAIN FUNCTION: Build minimal root-scoped alert subgraph
+// -----------------------------------------------------------------------------
 
-    session := neo4jDriver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
-    defer session.Close(ctx)
+func BuildEntityGraph(root string) (*GraphResponse, error) {
 
-    // ----------------------------
-    // Neo4j 2-hop Query
-    // ----------------------------
-    cypher := `
-    MATCH (root {name: $name})
-    OPTIONAL MATCH p = (root)-[*..6]-(n)
-    WITH COLLECT(DISTINCT root) + COLLECT(DISTINCT n) AS allNodes, COLLECT(DISTINCT p) AS allPaths
-    UNWIND allNodes AS nd
-    RETURN 
-       COLLECT(DISTINCT {name: nd.name}) AS nodes,
-       [p IN allPaths |
-          [r IN relationships(p) | {source: startNode(r).name, target: endNode(r).name, type: type(r)}]
-       ] AS edges
-    `
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 
-result, err := session.Run(ctx, cypher, map[string]interface{}{"name": entity})
-if err != nil {
-    return nil, err
+	session := neo4jDriver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	// -------------------------------------------------------------------------
+	// 1. GET ROOT + 6-HOP NEIGHBORHOOD
+	// -------------------------------------------------------------------------
+	query := `
+	MATCH (root {name:$root})
+	OPTIONAL MATCH p = (root)-[*..6]-(n)
+	RETURN 
+		COLLECT(DISTINCT root.name) AS rootNodes,
+		COLLECT(DISTINCT n.name) AS otherNodes,
+		COLLECT(p) AS paths
+	`
+
+	result, err := session.Run(ctx, query, map[string]interface{}{"root": root})
+	if err != nil {
+		return nil, err
+	}
+
+	if !result.Next(ctx) {
+		return nil, fmt.Errorf("root node not found: %s", root)
+	}
+
+	rec := result.Record()
+
+	rawRootNodes := rec.Values[0].([]interface{})
+	rawOtherNodes := rec.Values[1].([]interface{})
+	rawPaths := rec.Values[2].([]interface{})
+
+	// Build node name set
+	allNodes := map[string]struct{}{}
+	for _, rn := range rawRootNodes {
+		allNodes[rn.(string)] = struct{}{}
+	}
+	for _, rn := range rawOtherNodes {
+		allNodes[rn.(string)] = struct{}{}
+	}
+
+	// -------------------------------------------------------------------------
+	// 2. DETERMINE NODES WITH ALERTS
+	// -------------------------------------------------------------------------
+	alertSet := map[string]struct{}{}
+	alertInfo := map[string]AlertInfo{}
+
+	for name := range allNodes {
+		ai := fetchAlertInfo(name)
+		alertInfo[name] = ai
+		if ai.HasAlert {
+			alertSet[name] = struct{}{}
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// 3. PARSE RAW PATHS → COLLECT EDGES + ID→NAME MAP
+	// -------------------------------------------------------------------------
+	type edgeTuple struct {
+		srcID string
+		tgtID string
+		typ   string
+	}
+
+	rawEdges := []edgeTuple{}
+	idToName := map[string]string{}
+
+	for _, p := range rawPaths {
+		path, ok := p.(dbtype.Path)
+		if !ok {
+			continue
+		}
+
+		// Map node IDs
+		for _, n := range path.Nodes {
+			idToName[n.ElementId] = n.Props["name"].(string)
+		}
+
+		// Extract edges
+		for _, r := range path.Relationships {
+			rawEdges = append(rawEdges, edgeTuple{
+				srcID: r.StartElementId,
+				tgtID: r.EndElementId,
+				typ:   r.Type,
+			})
+		}
+	}
+
+	// Convert ID→Name edges
+	edges := []Edge{}
+	for _, e := range rawEdges {
+		src := idToName[e.srcID]
+		tgt := idToName[e.tgtID]
+		if src != "" && tgt != "" {
+			edges = append(edges, Edge{Source: src, Target: tgt, Type: e.typ})
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// 4. DETERMINE WHICH NODES SHOULD BE INCLUDED
+	// -------------------------------------------------------------------------
+	include := map[string]struct{}{}
+
+	// always include alert nodes
+	for a := range alertSet {
+		include[a] = struct{}{}
+	}
+
+	// shortest-path resolver
+	includePath := func(a, b string) {
+		q := `
+		MATCH p = shortestPath((x {name:$a})-[*..6]-(y {name:$b}))
+		RETURN [n IN nodes(p) | n.name] AS ns
+		`
+		res, err := session.Run(ctx, q, map[string]interface{}{"a": a, "b": b})
+		if err != nil {
+			return
+		}
+		if res.Next(ctx) {
+			arr, ok := res.Record().Values[0].([]interface{})
+			if ok {
+				for _, v := range arr {
+					include[v.(string)] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// root → alert
+	for a := range alertSet {
+		includePath(root, a)
+	}
+
+	// alert ↔ alert
+	alertList := keys(alertSet)
+	for i := 0; i < len(alertList); i++ {
+		for j := i + 1; j < len(alertList); j++ {
+			includePath(alertList[i], alertList[j])
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// 5. FILTER EDGES BY INCLUDED NODES
+	// -------------------------------------------------------------------------
+	filteredEdges := []Edge{}
+	for _, e := range edges {
+		if _, ok := include[e.Source]; ok {
+			if _, ok := include[e.Target]; ok {
+				filteredEdges = append(filteredEdges, e)
+			}
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// 6. REMOVE DUPLICATE EDGES
+	// -------------------------------------------------------------------------
+	finalEdges := uniqueEdges(filteredEdges)
+
+	// -------------------------------------------------------------------------
+	// 7. REMOVE DUPLICATE NODES
+	// -------------------------------------------------------------------------
+	finalNodes := uniqueNodes(include, alertInfo)
+
+	// -------------------------------------------------------------------------
+	// RETURN FINAL RESULT
+	// -------------------------------------------------------------------------
+	return &GraphResponse{
+		Root:  root,
+		Nodes: finalNodes,
+		Edges: finalEdges,
+	}, nil
 }
 
-var nodesRaw []map[string]interface{}
-var edgesRaw [][]map[string]interface{}
+// -----------------------------------------------------------------------------
+// HELPERS
+// -----------------------------------------------------------------------------
 
-if result.Next(ctx) {
-    rec := result.Record()
+// Remove duplicate edges
+func uniqueEdges(edges []Edge) []Edge {
+	seen := map[string]struct{}{}
+	out := []Edge{}
 
-    // -------------------------
-    // NODE UNMARSHALLING
-    // -------------------------
-    rawNodes, ok := rec.Values[0].([]interface{})
-    if !ok {
-        return nil, fmt.Errorf("unexpected type for nodes: %T", rec.Values[0])
-    }
-
-    nodesRaw = make([]map[string]interface{}, 0)
-    for _, item := range rawNodes {
-        if nodeMap, ok := item.(map[string]interface{}); ok {
-            nodesRaw = append(nodesRaw, nodeMap)
-        }
-    }
-
-    // -------------------------
-    // EDGE UNMARSHALLING
-    // -------------------------
-    rawEdges, ok := rec.Values[1].([]interface{})
-    if !ok {
-        return nil, fmt.Errorf("unexpected type for edges: %T", rec.Values[1])
-    }
-
-    edgesRaw = make([][]map[string]interface{}, 0)
-
-    for _, pathItem := range rawEdges {
-        pathList, ok := pathItem.([]interface{})
-        if !ok {
-            continue
-        }
-
-        edgeList := make([]map[string]interface{}, 0)
-        for _, e := range pathList {
-            if eMap, ok := e.(map[string]interface{}); ok {
-                edgeList = append(edgeList, eMap)
-            }
-        }
-
-        edgesRaw = append(edgesRaw, edgeList)
-    }
+	for _, e := range edges {
+		key := e.Source + "|" + e.Target + "|" + e.Type
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, e)
+	}
+	return out
 }
 
-// -------------------------
-// FLATTEN EDGES (GraphFormat)
-// -------------------------
-edges := []Edge{}
-for _, pathEdges := range edgesRaw {
-    for _, e := range pathEdges {
-        src, _ := e["source"].(string)
-        tgt, _ := e["target"].(string)
-        typ, _ := e["type"].(string)
-
-        edges = append(edges, Edge{
-            Source: src,
-            Target: tgt,
-            Type:   typ,
-        })
-    }
+// Remove duplicate nodes (only one per name)
+func uniqueNodes(include map[string]struct{}, alertInfo map[string]AlertInfo) []Node {
+	out := []Node{}
+	for name := range include {
+		ai := alertInfo[name]
+		out = append(out, Node{
+			Name:     name,
+			HasAlert: ai.HasAlert,
+			Severity: ai.Severity,
+		})
+	}
+	return out
 }
 
-
-    // Convert nodes + check alerts
-    nodes := []Node{}
-    for _, n := range nodesRaw {
-        name := n["name"].(string)
-        alertInfo := fetchAlertInfo(name)
-
-        nodes = append(nodes, Node{
-            Name:     name,
-            HasAlert: alertInfo.HasAlert,
-            Severity: alertInfo.Severity,
-        })
-    }
-
-    return &GraphResponse{
-        Root:  entity,
-        Nodes: nodes,
-        Edges: edges,
-    }, nil
-}
-
+// MongoDB alert lookup
 func fetchAlertInfo(node string) AlertInfo {
-    collection := db.GetCollection("alerts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+	col := db.GetCollection("alerts")
 
-    filter := bson.M{
-        "$or": []bson.M{
-            {"host": node},
-            {"entity": node},
-        },
-    }
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-    var result bson.M
-    err := collection.FindOne(ctx, filter).Decode(&result)
+	filter := bson.M{
+		"$or": []bson.M{
+			{"host": node},
+			{"entity": node},
+		},
+	}
 
-    if err != nil {
-        return AlertInfo{HasAlert: false}
-    }
+	var doc bson.M
+	err := col.FindOne(ctx, filter).Decode(&doc)
+	if err != nil {
+		return AlertInfo{HasAlert: false}
+	}
 
-    severity, ok := result["severity"].(string)
-    if !ok {
-        severity = ""
-    }
+	sev := ""
+	if s, ok := doc["severity"].(string); ok {
+		sev = s
+	}
 
-    return AlertInfo{
-        HasAlert: true,
-        Severity: severity,
-    }
+	return AlertInfo{
+		HasAlert: true,
+		Severity: sev,
+	}
+}
+
+func keys(m map[string]struct{}) []string {
+	out := []string{}
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
