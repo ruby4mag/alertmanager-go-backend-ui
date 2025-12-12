@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+
+
 func main() {
 	const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
 	r := gin.Default()
@@ -23,10 +25,13 @@ func main() {
 		MaxAge: 12 * time.Hour,
 	}))
 
+
+
 	r.POST("/register", handlers.Register)
 	r.POST("/login", handlers.Login)
 	r.POST("/refresh", handlers.RefreshToken)
 	r.POST("/alerts/callback", handlers.AlertCallback)
+	r.GET("/entity/:name", handlers.HandleEntityGraph)
 
 	protected := r.Group("/api")
 	protected.Use(auth.AuthMiddleware())

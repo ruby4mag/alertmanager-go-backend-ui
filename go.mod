@@ -10,6 +10,8 @@ require (
 	golang.org/x/crypto v0.24.0
 )
 
+require github.com/neo4j/neo4j-go-driver/v5 v5.28.4 // indirect
+
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect

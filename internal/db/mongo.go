@@ -25,7 +25,7 @@ func init() {
 		log.Fatal(err)
 	}
 
-	DB = client.Database("spog_development")
+	DB = client.Database("alertninja")
 }
 
 func GetCollection(collectionName string) *mongo.Collection {
