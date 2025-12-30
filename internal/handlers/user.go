@@ -137,7 +137,7 @@ func ProtectedResource(c *gin.Context) {
 
 func GetPermissions(c *gin.Context){
     permissions := make(map[string]interface{})
-    permissions["admin"] = []string{"NotifyRuleEdit", "AlertRuleEdit","TagRuleEdit"}
+    permissions["admin"] = []string{"NotifyRuleEdit", "AlertRuleEdit","TagRuleEdit","CorrelationRuleEdit"}
     permissions["user"] = []string{}
     c.JSON(http.StatusOK, gin.H{"permissions": permissions })
 }

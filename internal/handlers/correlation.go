@@ -10,20 +10,32 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 )
 
-type AlertInfo struct {
-	HasAlert bool   `json:"has_alert"`
-	Severity string `json:"severity,omitempty"`
+// ---------------------------------------------------------------------------
+// DATA STRUCTURES
+// ---------------------------------------------------------------------------
+
+type AlertDetail struct {
+	Summary   string `json:"summary,omitempty"`
+	Notes     string `json:"notes,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Severity  string `json:"severity,omitempty"`
+	Priority  string `json:"priority,omitempty"`
+	AlertID   string `json:"alert_id,omitempty"`
+	FirstSeen string `json:"first_seen,omitempty"`
+	LastSeen  string `json:"last_seen,omitempty"`
 }
 
 type Node struct {
-	Name     string `json:"name"`
-	HasAlert bool   `json:"has_alert"`
-	Severity string `json:"severity,omitempty"`
+	Name     string        `json:"name"`
+	HasAlert bool          `json:"has_alert"`
+	Severity string        `json:"severity,omitempty"` // Highest severity
+	Alerts   []AlertDetail `json:"alerts,omitempty"`   // Multiple alerts on the same entity
 }
 
 type Edge struct {
@@ -40,6 +52,10 @@ type GraphResponse struct {
 
 var neo4jDriver neo4j.DriverWithContext
 
+// ---------------------------------------------------------------------------
+// NEO4J DRIVER INIT
+// ---------------------------------------------------------------------------
+
 func init() {
 	var err error
 	neo4jDriver, err = neo4j.NewDriverWithContext(
@@ -50,6 +66,10 @@ func init() {
 		log.Fatalf("Neo4j connection failed: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// HTTP HANDLER
+// ---------------------------------------------------------------------------
 
 func HandleEntityGraph(c *gin.Context) {
 	root := c.Param("name")
@@ -63,191 +83,100 @@ func HandleEntityGraph(c *gin.Context) {
 	c.JSON(http.StatusOK, graph)
 }
 
-// -----------------------------------------------------------------------------
-// MAIN FUNCTION: Build minimal root-scoped alert subgraph
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// HELPER — Severity ranking
+// ---------------------------------------------------------------------------
 
-func BuildEntityGraph(root string) (*GraphResponse, error) {
+func pickHighestSeverity(a, b string) string {
+	order := map[string]int{
+		"INFO":     1,
+		"WARN":     2,
+		"ERROR":    3,
+		"CRITICAL": 4,
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if order[b] > order[a] {
+		return b
+	}
+	return a
+}
+
+// ---------------------------------------------------------------------------
+// HELPER — Fetch ALL alerts for a node from MongoDB
+// ---------------------------------------------------------------------------
+
+func fetchNodeAlerts(node string) ([]AlertDetail, string) {
+
+	col := db.GetCollection("alerts")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	session := neo4jDriver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
-	defer session.Close(ctx)
+	filter := bson.M{
+		"$or": []bson.M{
+			{"entity": node},
+			{"host": node},
+		},
+	}
 
-	// -------------------------------------------------------------------------
-	// 1. GET ROOT + 6-HOP NEIGHBORHOOD
-	// -------------------------------------------------------------------------
-	query := `
-	MATCH (root {name:$root})
-	OPTIONAL MATCH p = (root)-[*..6]-(n)
-	RETURN 
-		COLLECT(DISTINCT root.name) AS rootNodes,
-		COLLECT(DISTINCT n.name) AS otherNodes,
-		COLLECT(p) AS paths
-	`
-
-	result, err := session.Run(ctx, query, map[string]interface{}{"root": root})
+	cursor, err := col.Find(ctx, filter)
 	if err != nil {
-		return nil, err
+		return nil, ""
 	}
+	defer cursor.Close(ctx)
 
-	if !result.Next(ctx) {
-		return nil, fmt.Errorf("root node not found: %s", root)
-	}
+	alerts := []AlertDetail{}
+	highestSeverity := ""
 
-	rec := result.Record()
-
-	rawRootNodes := rec.Values[0].([]interface{})
-	rawOtherNodes := rec.Values[1].([]interface{})
-	rawPaths := rec.Values[2].([]interface{})
-
-	// Build node name set
-	allNodes := map[string]struct{}{}
-	for _, rn := range rawRootNodes {
-		allNodes[rn.(string)] = struct{}{}
-	}
-	for _, rn := range rawOtherNodes {
-		allNodes[rn.(string)] = struct{}{}
-	}
-
-	// -------------------------------------------------------------------------
-	// 2. DETERMINE NODES WITH ALERTS
-	// -------------------------------------------------------------------------
-	alertSet := map[string]struct{}{}
-	alertInfo := map[string]AlertInfo{}
-
-	for name := range allNodes {
-		ai := fetchAlertInfo(name)
-		alertInfo[name] = ai
-		if ai.HasAlert {
-			alertSet[name] = struct{}{}
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// 3. PARSE RAW PATHS → COLLECT EDGES + ID→NAME MAP
-	// -------------------------------------------------------------------------
-	type edgeTuple struct {
-		srcID string
-		tgtID string
-		typ   string
-	}
-
-	rawEdges := []edgeTuple{}
-	idToName := map[string]string{}
-
-	for _, p := range rawPaths {
-		path, ok := p.(dbtype.Path)
-		if !ok {
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
 			continue
 		}
 
-		// Map node IDs
-		for _, n := range path.Nodes {
-			idToName[n.ElementId] = n.Props["name"].(string)
-		}
-
-		// Extract edges
-		for _, r := range path.Relationships {
-			rawEdges = append(rawEdges, edgeTuple{
-				srcID: r.StartElementId,
-				tgtID: r.EndElementId,
-				typ:   r.Type,
-			})
-		}
-	}
-
-	// Convert ID→Name edges
-	edges := []Edge{}
-	for _, e := range rawEdges {
-		src := idToName[e.srcID]
-		tgt := idToName[e.tgtID]
-		if src != "" && tgt != "" {
-			edges = append(edges, Edge{Source: src, Target: tgt, Type: e.typ})
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// 4. DETERMINE WHICH NODES SHOULD BE INCLUDED
-	// -------------------------------------------------------------------------
-	include := map[string]struct{}{}
-
-	// always include alert nodes
-	for a := range alertSet {
-		include[a] = struct{}{}
-	}
-
-	// shortest-path resolver
-	includePath := func(a, b string) {
-		q := `
-		MATCH p = shortestPath((x {name:$a})-[*..6]-(y {name:$b}))
-		RETURN [n IN nodes(p) | n.name] AS ns
-		`
-		res, err := session.Run(ctx, q, map[string]interface{}{"a": a, "b": b})
-		if err != nil {
-			return
-		}
-		if res.Next(ctx) {
-			arr, ok := res.Record().Values[0].([]interface{})
-			if ok {
-				for _, v := range arr {
-					include[v.(string)] = struct{}{}
-				}
+		getString := func(key string) string {
+			if v, ok := doc[key].(string); ok {
+				return v
 			}
+			return ""
 		}
-	}
 
-	// root → alert
-	for a := range alertSet {
-		includePath(root, a)
-	}
-
-	// alert ↔ alert
-	alertList := keys(alertSet)
-	for i := 0; i < len(alertList); i++ {
-		for j := i + 1; j < len(alertList); j++ {
-			includePath(alertList[i], alertList[j])
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// 5. FILTER EDGES BY INCLUDED NODES
-	// -------------------------------------------------------------------------
-	filteredEdges := []Edge{}
-	for _, e := range edges {
-		if _, ok := include[e.Source]; ok {
-			if _, ok := include[e.Target]; ok {
-				filteredEdges = append(filteredEdges, e)
+		parseTime := func(field string) string {
+			m1, ok := doc[field].(bson.M)
+			if !ok {
+				return ""
 			}
+			m2, ok := m1["time"].(bson.M)
+			if !ok {
+				return ""
+			}
+			if dt, ok := m2["$date"].(primitive.DateTime); ok {
+				return dt.Time().Format(time.RFC3339)
+			}
+			return ""
 		}
+
+		alert := AlertDetail{
+			Summary:   getString("alertsummary"),
+			Notes:     getString("alertnotes"),
+			Status:    getString("alertstatus"),
+			Severity:  getString("severity"),
+			Priority:  getString("alertpriority"),
+			AlertID:   getString("alertid"),
+			FirstSeen: parseTime("alertfirsttime"),
+			LastSeen:  parseTime("alertlasttime"),
+		}
+
+		alerts = append(alerts, alert)
+		highestSeverity = pickHighestSeverity(highestSeverity, alert.Severity)
 	}
 
-	// -------------------------------------------------------------------------
-	// 6. REMOVE DUPLICATE EDGES
-	// -------------------------------------------------------------------------
-	finalEdges := uniqueEdges(filteredEdges)
-
-	// -------------------------------------------------------------------------
-	// 7. REMOVE DUPLICATE NODES
-	// -------------------------------------------------------------------------
-	finalNodes := uniqueNodes(include, alertInfo)
-
-	// -------------------------------------------------------------------------
-	// RETURN FINAL RESULT
-	// -------------------------------------------------------------------------
-	return &GraphResponse{
-		Root:  root,
-		Nodes: finalNodes,
-		Edges: finalEdges,
-	}, nil
+	return alerts, highestSeverity
 }
 
-// -----------------------------------------------------------------------------
-// HELPERS
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// HELPER — Unique edge list
+// ---------------------------------------------------------------------------
 
-// Remove duplicate edges
 func uniqueEdges(edges []Edge) []Edge {
 	seen := map[string]struct{}{}
 	out := []Edge{}
@@ -263,50 +192,205 @@ func uniqueEdges(edges []Edge) []Edge {
 	return out
 }
 
-// Remove duplicate nodes (only one per name)
-func uniqueNodes(include map[string]struct{}, alertInfo map[string]AlertInfo) []Node {
+// ---------------------------------------------------------------------------
+// HELPER — Unique nodes
+// ---------------------------------------------------------------------------
+
+func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail, severityMap map[string]string) []Node {
 	out := []Node{}
+
 	for name := range include {
-		ai := alertInfo[name]
+		alerts := alertMap[name]
+		sev := severityMap[name]
+
 		out = append(out, Node{
 			Name:     name,
-			HasAlert: ai.HasAlert,
-			Severity: ai.Severity,
+			HasAlert: len(alerts) > 0,
+			Severity: sev,
+			Alerts:   alerts,
 		})
 	}
+
 	return out
 }
 
-// MongoDB alert lookup
-func fetchAlertInfo(node string) AlertInfo {
-	col := db.GetCollection("alerts")
+// ---------------------------------------------------------------------------
+// MAIN FUNCTION — Build alert subgraph starting from root node
+// ---------------------------------------------------------------------------
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func BuildEntityGraph(root string) (*GraphResponse, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	filter := bson.M{
-		"$or": []bson.M{
-			{"host": node},
-			{"entity": node},
-		},
-	}
+	session := neo4jDriver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
 
-	var doc bson.M
-	err := col.FindOne(ctx, filter).Decode(&doc)
+	// -----------------------------------------------------------------------
+	// 1. Fetch root + 6-hop paths
+	// -----------------------------------------------------------------------
+	cypher := `
+	MATCH (root {name:$root})
+	OPTIONAL MATCH p = (root)-[*..6]-(n)
+	RETURN 
+		COLLECT(DISTINCT root.name),
+		COLLECT(DISTINCT n.name),
+		COLLECT(p)
+	`
+
+	result, err := session.Run(ctx, cypher, map[string]interface{}{"root": root})
 	if err != nil {
-		return AlertInfo{HasAlert: false}
+		return nil, err
+	}
+	if !result.Next(ctx) {
+		return nil, fmt.Errorf("root node not found: %s", root)
 	}
 
-	sev := ""
-	if s, ok := doc["severity"].(string); ok {
-		sev = s
+	rec := result.Record()
+
+	rawRootNodes := rec.Values[0].([]interface{})
+	rawOtherNodes := rec.Values[1].([]interface{})
+	rawPaths := rec.Values[2].([]interface{})
+
+	allNodes := map[string]struct{}{}
+
+	for _, n := range rawRootNodes {
+		allNodes[n.(string)] = struct{}{}
+	}
+	for _, n := range rawOtherNodes {
+		allNodes[n.(string)] = struct{}{}
 	}
 
-	return AlertInfo{
-		HasAlert: true,
-		Severity: sev,
+	// -----------------------------------------------------------------------
+	// 2. Fetch alerts for all nodes
+	// -----------------------------------------------------------------------
+	alertSet := map[string]struct{}{}
+	alertMap := map[string][]AlertDetail{}
+	severityMap := map[string]string{}
+
+	for name := range allNodes {
+		alerts, severity := fetchNodeAlerts(name)
+		alertMap[name] = alerts
+		severityMap[name] = severity
+
+		if len(alerts) > 0 {
+			alertSet[name] = struct{}{}
+		}
 	}
+
+	// -----------------------------------------------------------------------
+	// 3. Parse Neo4j paths into edges
+	// -----------------------------------------------------------------------
+	type edgeTuple struct {
+		srcID string
+		tgtID string
+		typ   string
+	}
+
+	rawEdges := []edgeTuple{}
+	idToName := map[string]string{}
+
+	for _, p := range rawPaths {
+		path, ok := p.(dbtype.Path)
+		if !ok {
+			continue
+		}
+
+		for _, n := range path.Nodes {
+			idToName[n.ElementId] = n.Props["name"].(string)
+		}
+
+		for _, r := range path.Relationships {
+			rawEdges = append(rawEdges, edgeTuple{
+				srcID: r.StartElementId,
+				tgtID: r.EndElementId,
+				typ:   r.Type,
+			})
+		}
+	}
+
+	edges := []Edge{}
+	for _, e := range rawEdges {
+		src := idToName[e.srcID]
+		tgt := idToName[e.tgtID]
+		if src != "" && tgt != "" {
+			edges = append(edges, Edge{Source: src, Target: tgt, Type: e.typ})
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 4. Determine which nodes to include:
+	//    - alert nodes
+	//    - nodes on path root → alert nodes
+	//    - nodes on path alert ↔ alert
+	// -----------------------------------------------------------------------
+	include := map[string]struct{}{}
+
+	for a := range alertSet {
+		include[a] = struct{}{}
+	}
+
+	includePath := func(a, b string) {
+		q := `
+		MATCH p = shortestPath((x {name:$a})-[*..6]-(y {name:$b}))
+		RETURN [n IN nodes(p) | n.name]
+		`
+		run, err := session.Run(ctx, q, map[string]interface{}{"a": a, "b": b})
+		if err != nil {
+			return
+		}
+		if run.Next(ctx) {
+			arr, ok := run.Record().Values[0].([]interface{})
+			if ok {
+				for _, x := range arr {
+					include[x.(string)] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// root → each alert node
+	for a := range alertSet {
+		includePath(root, a)
+	}
+
+	// alert ↔ alert
+	alertList := keys(alertSet)
+	for i := 0; i < len(alertList); i++ {
+		for j := i + 1; j < len(alertList); j++ {
+			includePath(alertList[i], alertList[j])
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 5. Filter edges and nodes
+	// -----------------------------------------------------------------------
+	filteredEdges := []Edge{}
+	for _, e := range edges {
+		if _, ok := include[e.Source]; ok {
+			if _, ok2 := include[e.Target]; ok2 {
+				filteredEdges = append(filteredEdges, e)
+			}
+		}
+	}
+
+	finalEdges := uniqueEdges(filteredEdges)
+	finalNodes := uniqueNodes(include, alertMap, severityMap)
+
+	// -----------------------------------------------------------------------
+	// RETURN RESULT
+	// -----------------------------------------------------------------------
+
+	return &GraphResponse{
+		Root:  root,
+		Nodes: finalNodes,
+		Edges: finalEdges,
+	}, nil
 }
+
+// ---------------------------------------------------------------------------
+// small helper
+// ---------------------------------------------------------------------------
 
 func keys(m map[string]struct{}) []string {
 	out := []string{}

@@ -58,6 +58,11 @@ func main() {
 		protected.GET("/tagrules/:id", handlers.EditTag)
 		protected.PUT("/tagrules/:id", handlers.UpdateTag)
 
+		protected.GET("/correlationrules", handlers.IndexCorrelation)
+		protected.POST("/correlationrules", handlers.NewCorrelation)
+		protected.GET("/correlationrules/:id", handlers.EditCorrelation)
+		protected.PUT("/correlationrules/:id", handlers.UpdateCorrelation)
+
 		protected.GET("/alerts", handlers.Alerts)
 		protected.POST("/alerts/:id/notify/:notificationid", handlers.Notify)
 
