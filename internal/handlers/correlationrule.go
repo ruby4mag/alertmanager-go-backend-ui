@@ -23,6 +23,10 @@ func NewCorrelation(c *gin.Context) {
         return
     }
 
+    if rule.CorrelationMode == "" {
+        rule.CorrelationMode = "TAG_BASED"
+    }
+
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
     result, err := collection.InsertOne(ctx, rule)
@@ -46,17 +50,26 @@ func IndexCorrelation(c *gin.Context) {
     }
     defer cur.Close(ctx)
 
-    var records []bson.M
+    var records []models.DbCorrelationRule
     for cur.Next(ctx) {
-        var record bson.M
+        var record models.DbCorrelationRule
         if err := cur.Decode(&record); err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
             return
         }
+        if record.ScopeTags == nil {
+            record.ScopeTags = []string{}
+        }
+        if record.Similarity.Fields == nil {
+            record.Similarity.Fields = []string{}
+        }
+        if record.GroupTags == nil {
+            record.GroupTags = []string{}
+        }
         records = append(records, record)
     }
     if records == nil {
-        records = []bson.M{}
+        records = []models.DbCorrelationRule{}
     }
 
     c.JSON(http.StatusOK, records)
@@ -79,6 +92,16 @@ func EditCorrelation(c *gin.Context) {
         c.JSON(http.StatusNotFound, gin.H{"message": "Item not found"})
         return
     }
+    
+    if record.ScopeTags == nil {
+        record.ScopeTags = []string{}
+    }
+    if record.Similarity.Fields == nil {
+        record.Similarity.Fields = []string{}
+    }
+    if record.GroupTags == nil {
+        record.GroupTags = []string{}
+    }
 
     c.JSON(http.StatusOK, record)
 }
@@ -96,6 +119,11 @@ func UpdateCorrelation(c *gin.Context) {
     if err != nil {
         c.JSON(http.StatusBadRequest, gin.H{"message": "Invalid ID format"})
         return
+    }
+
+    // Default mode if missing (optional, but good practice)
+    if rule.CorrelationMode == "" {
+        rule.CorrelationMode = "TAG_BASED"
     }
 
     collection := db.GetCollection("correlationrules")

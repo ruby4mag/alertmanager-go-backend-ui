@@ -53,6 +53,13 @@ type DbAlert struct {
 	Parent			bool				`json:"parent"`
 	ChildAlerts		[]DbAlert			`json:"childalerts"`
 	AlertDestination	string			`json:"alertdestination"`
+	GroupingReason      *GroupingReason `json:"grouping_reason,omitempty" bson:"grouping_reason,omitempty"`
+}
+
+type GroupingReason struct {
+	Type        string   `json:"type" bson:"type"`
+	Description string   `json:"description,omitempty" bson:"description,omitempty"`
+	Reasons     []string `json:"reasons,omitempty" bson:"reasons,omitempty"`
 }
 
 type WorkLog struct {
