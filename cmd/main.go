@@ -5,6 +5,7 @@ import (
 
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/auth"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/handlers"
+    "github.com/ruby4mag/alertmanager-go-backend-ui/internal/ai"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -12,7 +13,17 @@ import (
 
 
 
+
 func main() {
+    // Init AI Clients
+    // TODO: move to env vars
+    ai.InitAI("http://localhost:6333", "http://localhost:11434", "nomic-embed-text")
+    // Init Qdrant Collection (Async or Init phase)
+    go func() {
+         // Create collection for Feedback/RCA Memory
+        ai.EnsureCollection("rca_cases", 768) // 768 is default for nomic-embed-text
+    }()
+
 	const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
@@ -70,7 +81,9 @@ func main() {
 		protected.POST("/alerts/:id/comment", handlers.AddComment)
 		protected.POST("/alerts/:id/acknowledge", handlers.Acknowledge)
 		protected.POST("/alerts/:id/unacknowledge", handlers.Unacknowledge)
-		protected.POST("/alerts/:id/clear", handlers.Clear)
+	protected.POST("/alerts/:id/clear", handlers.Clear)
+        
+        protected.POST("/incidents/:id/feedback", handlers.AddFeedback) // NEW Feedback Endpoint
 
 		protected.GET("/resource", handlers.ProtectedResource)
 	}

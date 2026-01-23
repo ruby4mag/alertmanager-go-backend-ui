@@ -54,6 +54,8 @@ type DbAlert struct {
 	ChildAlerts		[]DbAlert			`json:"childalerts"`
 	AlertDestination	string			`json:"alertdestination"`
 	GroupingReason      *GroupingReason `json:"grouping_reason,omitempty" bson:"grouping_reason,omitempty"`
+    AIRCA               *AIRCA          `json:"ai_rca,omitempty" bson:"ai_rca,omitempty"`
+    Feedback            *IncidentFeedback `json:"feedback,omitempty" bson:"feedback,omitempty"`
 }
 
 type GroupingReason struct {

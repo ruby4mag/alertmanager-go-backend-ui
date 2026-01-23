@@ -238,7 +238,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	// 1. Discovery: Find all unique nodes reachable within 4 hops
 	CALL {
 		WITH root
-		MATCH (root)-[*0..4]-(n)
+		MATCH (root)-[*0..10]-(n)
 		RETURN collect(DISTINCT n) as nodes
 	}
 
