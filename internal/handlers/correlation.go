@@ -57,27 +57,7 @@ type GraphResponse struct {
 	Edges []Edge `json:"edges"`
 }
 
-var neo4jDriver neo4j.DriverWithContext
-
-// ---------------------------------------------------------------------------
-// NEO4J DRIVER INIT
-// ---------------------------------------------------------------------------
-
-func init() {
-	var err error
-	neo4jDriver, err = neo4j.NewDriverWithContext(
-		"bolt://192.168.1.201:7687",
-		neo4j.BasicAuth("neo4j", "kl8j2300", ""),
-		func(c *neo4j.Config) {
-			c.MaxConnectionLifetime = 5 * time.Minute
-			c.MaxConnectionPoolSize = 50
-			c.ConnectionAcquisitionTimeout = 10 * time.Second
-		},
-	)
-	if err != nil {
-		log.Fatalf("Neo4j connection failed: %v", err)
-	}
-}
+// neo4jDriver is now managed in internal/db/neo4j.go
 
 // ---------------------------------------------------------------------------
 // HTTP HANDLER
@@ -217,7 +197,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	session := neo4jDriver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	session := db.GetNeo4jDriver().NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
 	// DEBUG: Simple Connectivity Check

@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
@@ -13,18 +15,23 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// GetRelatedChanges returns changes related to an alert based on entity and time
+// NeighborNode represents a discovered neighbor
+type NeighborNode struct {
+	EntityID string
+	Distance int
+}
+
+// GetRelatedChanges returns changes related to an alert (direct + neighbors)
 func GetRelatedChanges(c *gin.Context) {
 	alertIDParam := c.Param("alert_id")
 	
-	// Convert alertID to ObjectID
 	objectID, err := primitive.ObjectIDFromHex(alertIDParam)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid alert ID format"})
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) 
 	defer cancel()
 
 	// 1. Fetch the Alert
@@ -36,95 +43,178 @@ func GetRelatedChanges(c *gin.Context) {
 		return
 	}
 
-	// 2. Define Query Parameters
-	entityID := alert.Entity
+	rootEntityID := alert.Entity
 	alertStartTime := alert.AlertFirstTime.Time
 	alertEndTime := alert.AlertClearTime.Time
-	
-	// If AlertClearTime is zero (active alert), consider "now" as the end boundary for overlap logic?
-	// Requirement: change.start_time <= alert_end_time.
-	// If the alert is active, it technically hasn't ended. But for a "related changes" query, 
-	// we usually want changes that happened *up to now*.
-	// However, if we strictly follow "change.start_time <= alert_end_time", and alert_end_time is Zero,
-	// we need to decide what to use. 
-	// Let's assume if ClearTime is zero, we use Now() for the purpose of finding *started* changes.
-	
 	effectiveEndTime := alertEndTime
 	if effectiveEndTime.IsZero() {
 		effectiveEndTime = time.Now()
 	}
 
-	// 3. Build Changes Filter
-	// Entity match: affected_entities contains alert's entity
-	// Time overlap:
-	//   change.start_time <= effectiveEndTime
-	//   AND (change.end_time is null OR change.end_time >= alert.start_time)
-	// Status filter: scheduled, in_progress, completed
+	// 2. Discover Neighbors via Neo4j
+	neighborsMap := make(map[string]int) // entity -> min_distance
 	
-	filter := bson.M{
-		"affected_entities": entityID,
+	// We only need neighbors if we can connect to Neo4j.
+	// If Neo4j is down or empty, we fallback to just direct changes gracefully.
+	neo4jDriver := db.GetNeo4jDriver()
+	if neo4jDriver != nil {
+		session := neo4jDriver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+		defer session.Close(ctx)
+
+		// Cypher: Find neighbors up to 6 hops
+		// Return: neighbor name, min(distance)
+		cypherQuery := `
+		MATCH (root)
+		WHERE root.name = $rootName OR root.id = $rootName
+		MATCH p = (root)-[*1..6]-(neighbor)
+		WITH neighbor, length(p) as distance
+		ORDER BY distance ASC
+		RETURN neighbor.name as name, min(distance) as dist
+		LIMIT 500
+		`
+		
+		res, err := session.Run(ctx, cypherQuery, map[string]interface{}{"rootName": rootEntityID})
+		if err == nil {
+			for res.Next(ctx) {
+				rec := res.Record()
+				name, ok1 := rec.Get("name")
+				dist, ok2 := rec.Get("dist")
+				
+				if ok1 && ok2 {
+					entityName := name.(string)
+					distance := int(dist.(int64))
+					// Only add if not already present or found closer path (though query orders by distance)
+					if _, exists := neighborsMap[entityName]; !exists {
+						neighborsMap[entityName] = distance
+					}
+				}
+			}
+		} else {
+			log.Printf("Neo4j neighbor query failed: %v", err)
+		}
+	} else {
+        log.Println("Neo4j driver is nil, skipping neighbor discovery")
+    }
+
+	// 3. Define Change Filter (Base)
+	// Status: scheduled, in_progress, completed
+	// Time: Overlaps with alert
+	baseFilter := bson.M{
 		"status": bson.M{"$in": []string{"scheduled", "in_progress", "completed"}},
 		"start_time": bson.M{"$lte": effectiveEndTime},
 		"$or": []bson.M{
-			{"end_time": nil}, // Start of time or open-ended
+			{"end_time": nil},
 			{"end_time": bson.M{"$exists": false}},
 			{"end_time": bson.M{"$gte": alertStartTime}},
 		},
 	}
 
-	// 4. Query Changes
 	changesCollection := db.GetCollection("changes")
-	findOptions := options.Find().SetSort(bson.D{{Key: "start_time", Value: -1}}) // Newest first
+	findOptions := options.Find().SetSort(bson.D{{Key: "start_time", Value: -1}})
 
-	cursor, err := changesCollection.Find(ctx, filter, findOptions)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query related changes"})
-		return
-	}
-	defer cursor.Close(ctx)
-
-	var changes []models.Change
-	if err := cursor.All(ctx, &changes); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode changes"})
-		return
-	}
-
-	// 5. Construct Response
-	relatedChanges := []models.RelatedChange{}
-	for _, ch := range changes {
-		// Overlap classification
-		overlapType := "during_alert"
-		if ch.StartTime.Before(alertStartTime) {
-			overlapType = "before_alert"
-		}
-		// Note regarding "after_alert": 
-		// Since we filter by change.start_time <= effectiveEndTime, 
-		// a change cannot start after the alert ends (or now).
-		// So "after_alert" is not reachable under strict query rules unless "after" means "after start" (which matches "during").
-		// We will stick to before/during distinction relative to Alert Start.
-
-		relatedChanges = append(relatedChanges, models.RelatedChange{
-			ChangeID:      ch.ChangeID,
-			Name:          ch.Name,
-			ChangeType:    ch.ChangeType,
-			Status:        ch.Status,
-			ImplementedBy: ch.ImplementedBy,
-			StartTime:     ch.StartTime,
-			EndTime:       ch.EndTime,
-			OverlapType:   overlapType,
-		})
-	}
-
-	response := models.RelatedChangesResponse{
-		AlertID:        alert.AlertId, // User friendly ID
-		EntityID:       alert.Entity,
-		RelatedChanges: relatedChanges,
-	}
+	// 4. Query & Process Direct Changes
+	directFilter := cloneMap(baseFilter)
+	directFilter["affected_entities"] = rootEntityID
 	
-	// Fallback if AlertId is empty, use ObjectID
+	var directChanges []models.RelatedChange
+	
+	cursorDirect, err := changesCollection.Find(ctx, directFilter, findOptions)
+	if err == nil {
+		var rawDirect []models.Change
+		if err := cursorDirect.All(ctx, &rawDirect); err == nil {
+			for _, ch := range rawDirect {
+				directChanges = append(directChanges, mapChange(ch, rootEntityID, 0, "direct", alertStartTime))
+			}
+		}
+	} else {
+        log.Printf("Error querying direct changes: %v", err)
+    }
+
+	// 5. Query & Process Neighbor Changes
+	var neighborChanges []models.RelatedChange
+	
+	if len(neighborsMap) > 0 {
+		neighborEntities := make([]string, 0, len(neighborsMap))
+		for k := range neighborsMap {
+			neighborEntities = append(neighborEntities, k)
+		}
+		
+		neighborFilter := cloneMap(baseFilter)
+		neighborFilter["affected_entities"] = bson.M{"$in": neighborEntities}
+		
+		cursorNeighbor, err := changesCollection.Find(ctx, neighborFilter, findOptions)
+		if err == nil {
+			var rawNeighbor []models.Change
+			if err := cursorNeighbor.All(ctx, &rawNeighbor); err == nil {
+				for _, ch := range rawNeighbor {
+					// Identify which specific neighbor(s) triggers this. 
+					// A change might affect multiple entities. We pick the impacted neighbor with smallest distance.
+					bestHop := 100
+					bestEntity := ""
+					
+					// Check overlap between change.AffectedEntities and neighborsMap
+					foundMatch := false
+					for _, affected := range ch.AffectedEntities {
+						if dist, ok := neighborsMap[affected]; ok {
+							if dist < bestHop {
+								bestHop = dist
+								bestEntity = affected
+								foundMatch = true
+							}
+						}
+					}
+					
+					if foundMatch {
+						neighborChanges = append(neighborChanges, mapChange(ch, bestEntity, bestHop, "neighbor", alertStartTime))
+					}
+				}
+			}
+		} else {
+            log.Printf("Error querying neighbor changes: %v", err)
+        }
+	}
+
+	// 6. Build Response
+	response := models.RelatedChangesResponse{
+		AlertID:         alert.AlertId,
+		RootEntityID:    rootEntityID,
+		DirectChanges:   directChanges,
+		NeighborChanges: neighborChanges,
+	}
+
 	if response.AlertID == "" {
 		response.AlertID = alert.ID.Hex()
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// Helper to map DB Change to UI RelatedChange
+func mapChange(ch models.Change, entityID string, hop int, scope string, alertStart time.Time) models.RelatedChange {
+	overlap := "during_alert"
+	if ch.StartTime.Before(alertStart) {
+		overlap = "before_alert"
+	}
+
+	return models.RelatedChange{
+		ChangeID:         ch.ChangeID,
+		Name:             ch.Name,
+		ChangeType:       ch.ChangeType,
+		Status:           ch.Status,
+		ImplementedBy:    ch.ImplementedBy,
+		StartTime:        ch.StartTime,
+		EndTime:          ch.EndTime,
+		OverlapType:      overlap,
+		ChangeScope:      scope,
+		AffectedEntityID: entityID,
+		HopDistance:      hop,
+	}
+}
+
+func cloneMap(m bson.M) bson.M {
+	newMap := bson.M{}
+	for k, v := range m {
+		newMap[k] = v
+	}
+	return newMap
 }

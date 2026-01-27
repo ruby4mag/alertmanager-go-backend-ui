@@ -6,6 +6,7 @@ import (
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/auth"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/handlers"
     "github.com/ruby4mag/alertmanager-go-backend-ui/internal/ai"
+    "github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,9 @@ func main() {
          // Create collection for Feedback/RCA Memory
         ai.EnsureCollection("rca_cases", 768) // 768 is default for nomic-embed-text
     }()
+    
+    // Init Neo4j
+    db.InitNeo4j("bolt://192.168.1.201:7687", "neo4j", "kl8j2300")
 
 	const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
 	r := gin.Default()

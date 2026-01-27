@@ -21,19 +21,25 @@ type Change struct {
 
 // RelatedChange is the UI-friendly representation with overlap details
 type RelatedChange struct {
-	ChangeID      string     `json:"change_id"`
-	Name          string     `json:"name"`
-	ChangeType    string     `json:"change_type"`
-	Status        string     `json:"status"`
-	ImplementedBy string     `json:"implemented_by"`
-	StartTime     time.Time  `json:"start_time"`
-	EndTime       *time.Time `json:"end_time"`
-	OverlapType   string     `json:"overlap_type"`
+	ChangeID         string     `json:"change_id"`
+	Name             string     `json:"name"`
+	ChangeType       string     `json:"change_type"`
+	Status           string     `json:"status"`
+	ImplementedBy    string     `json:"implemented_by"`
+	StartTime        time.Time  `json:"start_time"`
+	EndTime          *time.Time `json:"end_time"`
+	OverlapType      string     `json:"overlap_type"`
+	
+	// New fields for topology context
+	ChangeScope      string     `json:"change_scope"`       // "direct" or "neighbor"
+	AffectedEntityID string     `json:"affected_entity_id,omitempty"` // populated for neighbor changes
+	HopDistance      int        `json:"hop_distance,omitempty"`       // 0 for direct, >0 for neighbor
 }
 
 // RelatedChangesResponse is the response payload for the API
 type RelatedChangesResponse struct {
-	AlertID        string          `json:"alert_id"`
-	EntityID       string          `json:"entity_id"`
-	RelatedChanges []RelatedChange `json:"related_changes"`
+	AlertID         string          `json:"alert_id"`
+	RootEntityID    string          `json:"root_entity_id"`
+	DirectChanges   []RelatedChange `json:"direct_changes"`
+	NeighborChanges []RelatedChange `json:"neighbor_changes"`
 }
