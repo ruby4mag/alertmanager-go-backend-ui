@@ -81,7 +81,9 @@ func main() {
 		protected.POST("/alerts/:id/comment", handlers.AddComment)
 		protected.POST("/alerts/:id/acknowledge", handlers.Acknowledge)
 		protected.POST("/alerts/:id/unacknowledge", handlers.Unacknowledge)
-	protected.POST("/alerts/:id/clear", handlers.Clear)
+		protected.POST("/alerts/:id/clear", handlers.Clear)
+        
+        protected.GET("/v1/alerts/:alert_id/related-changes", handlers.GetRelatedChanges)
         
         protected.POST("/incidents/:id/feedback", handlers.AddFeedback) // NEW Feedback Endpoint
 
