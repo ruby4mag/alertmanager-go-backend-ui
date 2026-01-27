@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
+    "github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
@@ -31,12 +32,14 @@ type AlertDetail struct {
 	LastSeen  string `json:"last_seen,omitempty"`
 }
 
+// Update Node struct definition
 type Node struct {
-	Name         string        `json:"name"`
-	HasAlert     bool          `json:"has_alert"`
-	Severity     string        `json:"severity,omitempty"`
-	SupportOwner string        `json:"support_owner,omitempty"`
-	Alerts       []AlertDetail `json:"alerts,omitempty"`
+	Name         string           `json:"name"`
+	HasAlert     bool             `json:"has_alert"`
+	Severity     string           `json:"severity,omitempty"`
+	SupportOwner string           `json:"support_owner,omitempty"`
+	Alerts       []AlertDetail    `json:"alerts,omitempty"`
+	Changes      []models.RelatedChange `json:"changes"` // Change info
 }
 
 type Edge struct {
@@ -45,23 +48,67 @@ type Edge struct {
 	Type   string `json:"type"`
 }
 
-
-
-
-
-
-
 type GraphResponse struct {
 	Root  string `json:"root"`
 	Nodes []Node `json:"nodes"`
 	Edges []Edge `json:"edges"`
 }
 
-// neo4jDriver is now managed in internal/db/neo4j.go
+// ---------------------------------------------------------------------------
+// HELPER — Fetch ALL changes for a node from MongoDB
+// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// HTTP HANDLER
-// ---------------------------------------------------------------------------
+func fetchNodeChanges(node string) []models.RelatedChange {
+    col := db.GetCollection("changes")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    // Find changes affecting this entity within recent window (e.g. last 24h or fixed window)
+    // For now, let's just fetch recent changes (last 7 days?) to be safe, or just all for demo context
+    // Ideally we should use the time window from the context if available, but for Entity Graph it's generic discovery.
+    // Let's get last 24h changes.
+    // For demo purposes/testing with mismatched sample dates, we are removing the time filter.
+    // In production, this should likely be -7 days or similar.
+    filter := bson.M{
+        "affected_entities": node,
+    }
+
+    // Check filter correctness
+    // log.Printf("DEBUG: Fetching changes for node: %s since %v", node, startTime)
+
+    cursor, err := col.Find(ctx, filter)
+    if err != nil {
+        log.Printf("DEBUG: Find error for node %s: %v", node, err)
+        return nil
+    }
+    defer cursor.Close(ctx)
+
+    var dbChanges []models.Change
+    if err := cursor.All(ctx, &dbChanges); err != nil {
+        log.Printf("DEBUG: Decode error for node %s: %v", node, err)
+        return nil
+    }
+    
+    // if len(dbChanges) > 0 {
+    //    log.Printf("DEBUG: Found %d changes for node %s", len(dbChanges), node)
+    // }
+
+    changes := []models.RelatedChange{}
+    for _, ch := range dbChanges {
+        changes = append(changes, models.RelatedChange{
+            ChangeID:      ch.ChangeID,
+            Name:          ch.Name,
+            ChangeType:    ch.ChangeType,
+            Status:        ch.Status,
+            ImplementedBy: ch.ImplementedBy,
+            StartTime:     ch.StartTime,
+            EndTime:       ch.EndTime,
+            // OverlapType is relative to an alert, so it might be null here or generic
+            ChangeScope:   "direct", // On this specific node, it is direct
+        })
+    }
+    return changes
+}
 
 func HandleEntityGraph(c *gin.Context) {
 	root := c.Param("name")
@@ -74,10 +121,6 @@ func HandleEntityGraph(c *gin.Context) {
 
 	c.JSON(http.StatusOK, graph)
 }
-
-// ---------------------------------------------------------------------------
-// HELPER — Severity ranking
-// ---------------------------------------------------------------------------
 
 func pickHighestSeverity(a, b string) string {
 	order := map[string]int{
@@ -93,12 +136,7 @@ func pickHighestSeverity(a, b string) string {
 	return a
 }
 
-// ---------------------------------------------------------------------------
-// HELPER — Fetch ALL alerts for a node from MongoDB
-// ---------------------------------------------------------------------------
-
 func fetchNodeAlerts(node string) ([]AlertDetail, string) {
-
 	col := db.GetCollection("alerts")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -165,10 +203,6 @@ func fetchNodeAlerts(node string) ([]AlertDetail, string) {
 	return alerts, highestSeverity
 }
 
-// ---------------------------------------------------------------------------
-// HELPER — Unique edge list
-// ---------------------------------------------------------------------------
-
 func uniqueEdges(edges []Edge) []Edge {
 	seen := map[string]struct{}{}
 	out := []Edge{}
@@ -184,15 +218,8 @@ func uniqueEdges(edges []Edge) []Edge {
 	return out
 }
 
-
-
-// ---------------------------------------------------------------------------
-// MAIN FUNCTION — Build alert subgraph starting from root node
-// ---------------------------------------------------------------------------
-
 func BuildEntityGraph(root string) (*GraphResponse, error) { 
 	log.Printf("DEBUG: Searching for root node: '%s' (len: %d)", root, len(root))
-
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -200,7 +227,6 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	session := db.GetNeo4jDriver().NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
-	// DEBUG: Simple Connectivity Check
 	_, err := session.Run(ctx, "RETURN 1", nil)
 	if err != nil {
 		log.Printf("DEBUG: Connectivity Check Failed! Could not run simple query: %v", err)
@@ -208,21 +234,16 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	}
 	log.Println("DEBUG: Neo4j Connection Verified. Proceeding with Graph Query...")
 
-	// -----------------------------------------------------------------------
-	// 1. Fetch root + 6-hop paths
-	// -----------------------------------------------------------------------
 	cypher := `
 	MATCH (root) 
 	WHERE root.name = $root OR root.id = $root
 	
-	// 1. Discovery: Find all unique nodes reachable within 4 hops
 	CALL {
 		WITH root
 		MATCH (root)-[*0..10]-(n)
 		RETURN collect(DISTINCT n) as nodes
 	}
 
-	// 2. Connectivity: Find all edges strictly between these nodes
 	WITH nodes
 	UNWIND nodes as n
 	MATCH (n)-[r]-(m)
@@ -242,29 +263,21 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 
 	rec := result.Record()
 
-	// -----------------------------------------------------------------------
-	// 2. Parse optimized result (Nodes + Edges)
-	// -----------------------------------------------------------------------
 	rawNodes := rec.Values[0].([]interface{})
 	rawEdges := rec.Values[1].([]interface{})
 
-	// log.Printf("DEBUG: Neo4j Topology Search -> Nodes: %d, Edges: %d", len(rawNodes), len(rawEdges))
-
 	allNodes := map[string]struct{}{}
 	idToName := map[string]string{}
-	nodeProps := map[string]string{} // Map to store support_owner
+	nodeProps := map[string]string{}
 
-	// Process Nodes
 	for _, n := range rawNodes {
 		node, ok := n.(dbtype.Node)
 		if ok {
-			// Safety check for name property
 			if nameVal, exists := node.Props["name"]; exists {
 				nameStr := nameVal.(string)
 				allNodes[nameStr] = struct{}{}
 				idToName[node.ElementId] = nameStr
 
-				// Extract support_owner
 				if owner, ok := node.Props["support_owner"].(string); ok {
 					nodeProps[nameStr] = owner
 				}
@@ -272,7 +285,6 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 		}
 	}
 
-	// Process Edges
 	edges := []Edge{}
 	for _, r := range rawEdges {
 		rel, ok := r.(dbtype.Relationship)
@@ -285,30 +297,35 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 		}
 	}
 
-	// -----------------------------------------------------------------------
-	// 3. Fetch alerts for all nodes
-	// -----------------------------------------------------------------------
 	alertSet := map[string]struct{}{}
 	alertMap := map[string][]AlertDetail{}
+	changeMap := map[string][]models.RelatedChange{} // Store changes per node
 	severityMap := map[string]string{}
 
 	for name := range allNodes {
 		alerts, severity := fetchNodeAlerts(name)
+		changes := fetchNodeChanges(name) // Fetch Changes
+		
 		alertMap[name] = alerts
+		changeMap[name] = changes
 		severityMap[name] = severity
 
 		if len(alerts) > 0 {
 			alertSet[name] = struct{}{}
 		}
+        // Also include nodes if they have recent changes? 
+        // Requirement says "add the nodes with direct changed ... so i can show visually".
+        // It implies if a node has changes, it might be interesting even if no alert?
+        // But the previous logic was aggressively pruning nodes without alerts.
+        // Let's keep the existing logic: include path to alerts.
+        // If a node on the path has changes, we show them.
+        // If the user wants to see *all* nodes with changes, we should add them to 'include' set.
+        if len(changes) > 0 {
+             alertSet[name] = struct{}{} // Treat "Has Change" similar to "Has Alert" for graph inclusion
+        }
 	}
-	log.Printf("DEBUG: Alert Lookup -> Checked %d nodes. Nodes with Alerts: %d", len(allNodes), len(alertSet))
+	log.Printf("DEBUG: Alert/Change Lookup -> Checked %d nodes. Interesting Nodes: %d", len(allNodes), len(alertSet))
 
-	// -----------------------------------------------------------------------
-	// 4. Determine which nodes to include:
-	//    - alert nodes
-	//    - nodes on path root → alert nodes
-	//    - nodes on path alert ↔ alert
-	// -----------------------------------------------------------------------
 	include := map[string]struct{}{}
 
 	for a := range alertSet {
@@ -337,12 +354,10 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 		}
 	}
 
-	// root → each alert node
 	for a := range alertSet {
 		includePath(root, a)
 	}
 
-	// alert ↔ alert
 	alertList := keys(alertSet)
 	for i := 0; i < len(alertList); i++ {
 		for j := i + 1; j < len(alertList); j++ {
@@ -350,9 +365,6 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 		}
 	}
 
-	// -----------------------------------------------------------------------
-	// 5. Filter edges and nodes
-	// -----------------------------------------------------------------------
 	filteredEdges := []Edge{}
 	for _, e := range edges {
 		if _, ok := include[e.Source]; ok {
@@ -363,11 +375,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	}
 
 	finalEdges := uniqueEdges(filteredEdges)
-	finalNodes := uniqueNodes(include, alertMap, severityMap, nodeProps)
-
-	// -----------------------------------------------------------------------
-	// RETURN RESULT
-	// -----------------------------------------------------------------------
+	finalNodes := uniqueNodes(include, alertMap, changeMap, severityMap, nodeProps) // Passed changeMap
 
 	return &GraphResponse{
 		Root:  root,
@@ -376,15 +384,12 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	}, nil
 }
 
-// ---------------------------------------------------------------------------
-// HELPER — Unique nodes
-// ---------------------------------------------------------------------------
-
-func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail, severityMap map[string]string, nodeProps map[string]string) []Node {
+func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail, changeMap map[string][]models.RelatedChange, severityMap map[string]string, nodeProps map[string]string) []Node {
 	out := []Node{}
 
 	for name := range include {
 		alerts := alertMap[name]
+		changes := changeMap[name]
 		sev := severityMap[name]
 		owner := nodeProps[name]
 
@@ -393,16 +398,13 @@ func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail,
 			HasAlert:     len(alerts) > 0,
 			Severity:     sev,
 			Alerts:       alerts,
+			Changes:      changes, // Populate Changes
 			SupportOwner: owner,
 		})
 	}
 
 	return out
 }
-
-// ---------------------------------------------------------------------------
-// small helper
-// ---------------------------------------------------------------------------
 
 func keys(m map[string]struct{}) []string {
 	out := []string{}
