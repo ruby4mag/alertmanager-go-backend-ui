@@ -85,8 +85,12 @@ func main() {
 		protected.POST("/alerts/:id/comment", handlers.AddComment)
 		protected.POST("/alerts/:id/acknowledge", handlers.Acknowledge)
 		protected.POST("/alerts/:id/unacknowledge", handlers.Unacknowledge)
-		protected.POST("/alerts/:id/clear", handlers.Clear)
+        protected.POST("/alerts/:id/clear", handlers.Clear)
         
+        // Risk Analysis
+        protected.POST("/v1/risk/score", handlers.CalculateChangeRisk)
+        protected.GET("/v1/changes/risk", handlers.ListChangesWithRisk)
+
         protected.GET("/v1/alerts/:alert_id/related-changes", handlers.GetRelatedChanges)
         protected.POST("/v1/alerts/:id/rca/trigger", handlers.TriggerAIRCA)
         

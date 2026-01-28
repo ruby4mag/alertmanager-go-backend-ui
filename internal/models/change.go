@@ -10,7 +10,9 @@ import (
 type Change struct {
 	ID               primitive.ObjectID `bson:"_id,omitempty"`
 	ChangeID         string             `bson:"change_id"`
+	Source           string             `bson:"source"`
 	Name             string             `bson:"name"`
+	Description      string             `bson:"description"`
 	ChangeType       string             `bson:"change_type"`
 	Status           string             `bson:"status"`
 	ImplementedBy    string             `bson:"implemented_by"`
