@@ -62,33 +62,29 @@ func GetRelatedChanges(c *gin.Context) {
 		defer session.Close(ctx)
 
 		// Cypher: Find neighbors up to 6 hops
-		// Return: neighbor name, min(distance)
+		// Optimization: We use DISTINCT neighbor to avoid path explosion on dense graphs.
+		// We sacrifice accurate distance for performance here, defaulting to 1 (neighbor).
+		// If needed, we can re-calculate distance for the specific matching changes later.
 		cypherQuery := `
 		MATCH (root)
-		WHERE root.name = $rootName OR root.id = $rootName
-		MATCH p = (root)-[*1..6]-(neighbor)
-		WITH neighbor, length(p) as distance
-		ORDER BY distance ASC
-		RETURN neighbor.name as name, min(distance) as dist
-		LIMIT 500
+		WHERE toLower(root.name) = toLower($rootName) OR toLower(root.id) = toLower($rootName)
+		MATCH (root)-[*1..6]-(neighbor)
+		RETURN distinct neighbor.name as name
+		LIMIT 20000
 		`
 		
 		res, err := session.Run(ctx, cypherQuery, map[string]interface{}{"rootName": rootEntityID})
 		if err == nil {
 			for res.Next(ctx) {
 				rec := res.Record()
-				name, ok1 := rec.Get("name")
-				dist, ok2 := rec.Get("dist")
-				
-				if ok1 && ok2 {
-					entityName := name.(string)
-					distance := int(dist.(int64))
-					// Only add if not already present or found closer path (though query orders by distance)
-					if _, exists := neighborsMap[entityName]; !exists {
-						neighborsMap[entityName] = distance
+				if nameVal, ok := rec.Get("name"); ok && nameVal != nil {
+					entityName, ok := nameVal.(string)
+					if ok {
+						neighborsMap[entityName] = 1 // Default distance
 					}
 				}
 			}
+			log.Printf("DEBUG: Found %d neighbors for root %s via Neo4j (Fast Query)", len(neighborsMap), rootEntityID)
 		} else {
 			log.Printf("Neo4j neighbor query failed: %v", err)
 		}
@@ -116,7 +112,8 @@ func GetRelatedChanges(c *gin.Context) {
 	directFilter := cloneMap(baseFilter)
 	directFilter["affected_entities"] = rootEntityID
 	
-	var directChanges []models.RelatedChange
+	// Initialize as empty slice so JSON returns [] instead of null
+	directChanges := make([]models.RelatedChange, 0)
 	
 	cursorDirect, err := changesCollection.Find(ctx, directFilter, findOptions)
 	if err == nil {
@@ -131,7 +128,7 @@ func GetRelatedChanges(c *gin.Context) {
     }
 
 	// 5. Query & Process Neighbor Changes
-	var neighborChanges []models.RelatedChange
+	neighborChanges := make([]models.RelatedChange, 0)
 	
 	if len(neighborsMap) > 0 {
 		neighborEntities := make([]string, 0, len(neighborsMap))
@@ -168,11 +165,14 @@ func GetRelatedChanges(c *gin.Context) {
 						neighborChanges = append(neighborChanges, mapChange(ch, bestEntity, bestHop, "neighbor", alertStartTime))
 					}
 				}
+                log.Printf("DEBUG: Found %d matching neighbor changes (from %d candidates)", len(neighborChanges), len(rawNeighbor))
 			}
 		} else {
             log.Printf("Error querying neighbor changes: %v", err)
         }
-	}
+	} else {
+        log.Printf("DEBUG: No neighbors found in map, skipping neighbor changes query.")
+    }
 
 	// 6. Build Response
 	response := models.RelatedChangesResponse{

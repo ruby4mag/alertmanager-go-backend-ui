@@ -236,7 +236,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 
 	cypher := `
 	MATCH (root) 
-	WHERE root.name = $root OR root.id = $root
+	WHERE toLower(root.name) = toLower($root) OR toLower(root.id) = toLower($root)
 	
 	CALL {
 		WITH root
@@ -336,8 +336,12 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 		if a == b {
 			return
 		}
+		// Match nodes by name or id, case-insensitive
 		q := `
-		MATCH p = shortestPath((x {name:$a})-[*..6]-(y {name:$b}))
+		MATCH (start), (end)
+		WHERE (toLower(start.name) = toLower($a) OR toLower(start.id) = toLower($a)) AND
+		      (toLower(end.name) = toLower($b) OR toLower(end.id) = toLower($b))
+		MATCH p = shortestPath((start)-[*..6]-(end))
 		RETURN [n IN nodes(p) | n.name]
 		`
 		run, err := session.Run(ctx, q, map[string]interface{}{"a": a, "b": b})

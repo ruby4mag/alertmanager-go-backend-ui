@@ -49,6 +49,7 @@ func ListChangesWithRisk(c *gin.Context) {
         Status         string               `json:"status"`
         Source         string               `json:"source"`      // New
         ImplementedBy  string               `json:"implemented_by"` // New
+        AffectedEntities []string           `json:"affected_entities"` // New
         StartTime      time.Time            `json:"start_time"`
         EndTime        *time.Time           `json:"end_time"`    // New
         Risk           models.RiskResult    `json:"risk_details"`
@@ -89,6 +90,7 @@ func ListChangesWithRisk(c *gin.Context) {
             Status:        ch.Status,
             Source:        ch.Source,
             ImplementedBy: ch.ImplementedBy,
+            AffectedEntities: ch.AffectedEntities,
             StartTime:     ch.StartTime,
             EndTime:       ch.EndTime,
             Risk:          riskResult,
