@@ -90,6 +90,7 @@ func main() {
         // Risk Analysis
         protected.POST("/v1/risk/score", handlers.CalculateChangeRisk)
         protected.GET("/v1/changes/risk", handlers.ListChangesWithRisk)
+        protected.GET("/v1/changes/:change_id", handlers.GetChangeDetail)
 
         protected.GET("/v1/alerts/:alert_id/related-changes", handlers.GetRelatedChanges)
         protected.POST("/v1/alerts/:id/rca/trigger", handlers.TriggerAIRCA)

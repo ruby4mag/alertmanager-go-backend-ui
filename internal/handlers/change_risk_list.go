@@ -149,3 +149,60 @@ func computeRiskInternal(input models.RiskInput) models.RiskResult {
         ComputedAt: time.Now(),
     }
 }
+
+// GetChangeDetail retrieves a single change by ID with full details
+func GetChangeDetail(c *gin.Context) {
+    changeID := c.Param("change_id")
+
+    col := db.GetCollection("changes")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    var change models.Change
+    // Try finding by change_id string
+    err := col.FindOne(ctx, bson.M{"change_id": changeID}).Decode(&change)
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Change not found"})
+        return
+    }
+
+    // Reuse logic to calculate risk
+    mockFacts := models.TopologyFacts{
+        DirectDependentsCount: 2, 
+        IndirectDependentsCount: 5,
+        NodeTier: "Tier-1",
+        NeighborTiers: []string{"Tier-2"},
+        ConcurrentChanges: 0,
+        HasRollbackPlan: true, 
+    }
+    
+    riskInput := models.RiskInput{
+        Change: models.ChangeDetails{
+            ChangeID: change.ChangeID,
+            Node: "unknown", 
+            ChangeType: change.ChangeType,
+            ChangeScope: "direct",
+        },
+        TopologyFacts: mockFacts,
+    }
+    
+    riskResult := computeRiskInternal(riskInput)
+
+    // Construct Response
+    response := gin.H{
+        "change_id":         change.ChangeID,
+        "name":              change.Name,
+        "description":       change.Description,
+        "source":            change.Source,
+        "status":            change.Status,
+        "change_type":       change.ChangeType,
+        "start_time":        change.StartTime,
+        "end_time":          change.EndTime,
+        "implemented_by":    change.ImplementedBy,
+        "affected_entities": change.AffectedEntities,
+        "associated_alerts": []string{}, // Placeholder as requested
+        "risk_details":      riskResult,
+    }
+
+    c.JSON(http.StatusOK, response)
+}
