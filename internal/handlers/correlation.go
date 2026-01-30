@@ -234,17 +234,13 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	}
 	log.Println("DEBUG: Neo4j Connection Verified. Proceeding with Graph Query...")
 
+	// Optimized query: Fetch nodes and edges separately to avoid path explosion
 	cypher := `
 	MATCH (root) 
 	WHERE toLower(root.name) = toLower($root) OR toLower(root.id) = toLower($root)
-	
-	CALL {
-		WITH root
-		MATCH (root)-[*0..10]-(n)
-		RETURN collect(DISTINCT n) as nodes
-	}
-
-	WITH nodes
+	MATCH (root)-[*0..10]-(n)
+	WITH DISTINCT n as node
+	WITH collect(node) as nodes
 	UNWIND nodes as n
 	MATCH (n)-[r]-(m)
 	WHERE m IN nodes

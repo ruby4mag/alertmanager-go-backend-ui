@@ -78,6 +78,10 @@ func main() {
 		protected.GET("/correlationrules/:id", handlers.EditCorrelation)
 		protected.PUT("/correlationrules/:id", handlers.UpdateCorrelation)
 
+		// PagerDuty endpoints
+		protected.GET("/pagerduty/services", handlers.GetPagerDutyServices)
+		protected.GET("/pagerduty/escalation-policies", handlers.GetPagerDutyEscalationPolicies)
+
 		protected.GET("/alerts", handlers.Alerts)
 		protected.POST("/alerts/:id/notify/:notificationid", handlers.Notify)
 

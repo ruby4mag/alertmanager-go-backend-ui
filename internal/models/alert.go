@@ -56,6 +56,13 @@ type DbAlert struct {
 	GroupingReason      *GroupingReason `json:"grouping_reason,omitempty" bson:"grouping_reason,omitempty"`
     AIRCA               *AIRCA          `json:"ai_rca,omitempty" bson:"ai_rca,omitempty"`
     Feedback            *IncidentFeedback `json:"feedback,omitempty" bson:"feedback,omitempty"`
+	PagerDutyIncidentNumber	int				`json:"pagerduty_incident_number,omitempty" bson:"pagerduty_incident_number,omitempty"`
+	PagerDutyIncidentId	string			`json:"pagerduty_incident_id,omitempty" bson:"pagerduty_incident_id,omitempty"`
+	PagerDutyPriority	string			`json:"pagerduty_priority,omitempty" bson:"pagerduty_priority,omitempty"`
+	PagerDutyUrgency	string			`json:"pagerduty_urgency,omitempty" bson:"pagerduty_urgency,omitempty"`
+	PagerDutyHtmlUrl	string			`json:"pagerduty_html_url,omitempty" bson:"pagerduty_html_url,omitempty"`
+	PagerDutyService	string			`json:"pagerduty_service,omitempty" bson:"pagerduty_service,omitempty"`
+	PagerDutyEscalationPolicy	string	`json:"pagerduty_escalation_policy,omitempty" bson:"pagerduty_escalation_policy,omitempty"`
 }
 
 type GroupingReason struct {
