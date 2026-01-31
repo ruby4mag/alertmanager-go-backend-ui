@@ -100,7 +100,7 @@ func Login(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{
         "token":         jwtToken,
         "refresh_token": refreshToken,
-        "username" : "Magin",
+        "username" : user.Username,
         "role" : user.Role,
     })
 }

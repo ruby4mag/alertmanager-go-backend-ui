@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -201,7 +202,11 @@ func Clear(c *gin.Context) {
 }
 
 func Notify(c *gin.Context) {
-const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
+    noderedEndpoint := os.Getenv("NODERED_ENDPOINT")
+    if noderedEndpoint == "" {
+        noderedEndpoint = "http://192.168.1.201:1880/notifications"
+    }
+
     id := c.Param("id")
     notificationid := c.Param("notificationid")
     objectID, err := primitive.ObjectIDFromHex(id)
@@ -241,7 +246,7 @@ const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
         fmt.Println("Error:", err)
     }
     fmt.Println(byteSlice)
-    response, err := http.Post( NoderedEndpoint , "application/json", bytes.NewBuffer(byteSlice))
+    response, err := http.Post(noderedEndpoint, "application/json", bytes.NewBuffer(byteSlice))
     if err != nil {
         log.Fatalf("Error making POST request: %v", err)
     }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"time"
 
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/auth"
@@ -26,9 +27,24 @@ func main() {
     }()
     
     // Init Neo4j
-    db.InitNeo4j("bolt://192.168.1.201:7687", "neo4j", "kl8j2300")
+    neo4jURI := os.Getenv("NEO4J_URI")
+    if neo4jURI == "" {
+        neo4jURI = "bolt://192.168.1.201:7687"
+    }
+    neo4jUser := os.Getenv("NEO4J_USER")
+    if neo4jUser == "" {
+        neo4jUser = "neo4j"
+    }
+    neo4jPassword := os.Getenv("NEO4J_PASSWORD")
+    if neo4jPassword == "" {
+        neo4jPassword = "kl8j2300"
+    }
+    db.InitNeo4j(neo4jURI, neo4jUser, neo4jPassword)
 
-	const NoderedEndpoint = "http://192.168.1.201:1880/notifications"
+	noderedEndpoint := os.Getenv("NODERED_ENDPOINT")
+	if noderedEndpoint == "" {
+		noderedEndpoint = "http://192.168.1.201:1880/notifications"
+	}
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
 		AllowAllOrigins: true,
