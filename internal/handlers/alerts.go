@@ -161,12 +161,16 @@ func Clear(c *gin.Context) {
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    cur, err := collection.Find(ctx, bson.M{})
+    // First, fetch the alert to check if it's a parent or child
+    var alert models.DbAlert
+    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&alert)
     if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        c.JSON(http.StatusNotFound, gin.H{"message": "Alert not found"})
         return
     }
-    defer cur.Close(ctx)
+
+    log.Printf("Closing alert %s - Parent: %v, Grouped: %v, GroupIncidentId: %s, GroupAlerts count: %d",
+        objectID.Hex(), alert.Parent, alert.Grouped, alert.GroupIncidentId, len(alert.GroupAlerts))
 
     var newComment models.WorkLog
     if err := c.ShouldBindJSON(&newComment); err != nil {
@@ -184,18 +188,125 @@ func Clear(c *gin.Context) {
     newComment.CreatedAt = time.Now()
     newComment.Author = username.(string)
 
+    // Close the main alert
     filter := bson.M{"_id": objectID}
     update := bson.M{
         "$push": bson.M{
             "worklogs": newComment,
-            },
+        },
         "$set": bson.M{
-            "alertstatus": "CLOSED",
+            "AlertStatus": "CLOSED",
         }}
     _, err = collection.UpdateOne(context.TODO(), filter, update)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
+    }
+
+    // Logic 1: If this is a parent alert, close all child alerts
+    if alert.Parent && len(alert.GroupAlerts) > 0 {
+        childComment := models.WorkLog{
+            ID:        primitive.NewObjectID(),
+            Author:    "System",
+            Comment:   "Child alert closed due to closure of parent alert",
+            CreatedAt: time.Now(),
+        }
+
+        childFilter := bson.M{"_id": bson.M{"$in": alert.GroupAlerts}}
+        childUpdate := bson.M{
+            "$push": bson.M{
+                "worklogs": childComment,
+            },
+            "$set": bson.M{
+                "AlertStatus": "CLOSED",
+            }}
+
+        _, err = collection.UpdateMany(context.TODO(), childFilter, childUpdate)
+        if err != nil {
+            log.Printf("Error closing child alerts: %v", err)
+        } else {
+            log.Printf("Closed %d child alerts for parent alert %s", len(alert.GroupAlerts), id)
+        }
+    }
+
+    // Logic 2: If this is a child alert (grouped), check if all siblings are closed
+    if alert.Grouped {
+        log.Printf("Child alert closed. Grouped: %v, looking for parent...", alert.Grouped)
+        
+        // Find the parent alert by checking which parent has this child in its GroupAlerts array
+        var parentAlert models.DbAlert
+        parentFilter := bson.M{
+            "parent": true,
+            "groupalerts": bson.M{"$in": []primitive.ObjectID{objectID}},
+        }
+        err = collection.FindOne(ctx, parentFilter).Decode(&parentAlert)
+        if err != nil {
+            log.Printf("Could not find parent alert containing child %s: %v", objectID.Hex(), err)
+        } else {
+            log.Printf("Found parent alert %s with %d children", parentAlert.ID.Hex(), len(parentAlert.GroupAlerts))
+            
+            if len(parentAlert.GroupAlerts) > 0 {
+                // Check if all child alerts are now closed (fetch fresh data from DB)
+                childFilter := bson.M{"_id": bson.M{"$in": parentAlert.GroupAlerts}}
+                cursor, err := collection.Find(ctx, childFilter)
+                if err == nil {
+                    defer cursor.Close(ctx)
+                    
+                    allClosed := true
+                    closedCount := 0
+                    totalCount := 0
+                    
+                    for cursor.Next(ctx) {
+                        var childAlert models.DbAlert
+                        if err := cursor.Decode(&childAlert); err == nil {
+                            totalCount++
+                            log.Printf("Child alert %s status: %s", childAlert.ID.Hex(), childAlert.AlertStatus)
+                            if childAlert.AlertStatus == "CLOSED" {
+                                closedCount++
+                            } else {
+                                allClosed = false
+                            }
+                        }
+                    }
+
+                    log.Printf("Child alerts status: %d/%d closed", closedCount, totalCount)
+
+                    // If all children are closed, close the parent
+                    if allClosed && totalCount > 0 {
+                        log.Printf("All child alerts are closed. Closing parent alert %s", parentAlert.ID.Hex())
+                        
+                        parentComment := models.WorkLog{
+                            ID:        primitive.NewObjectID(),
+                            Author:    "System",
+                            Comment:   "Parent alert closed automatically as all child alerts are closed",
+                            CreatedAt: time.Now(),
+                        }
+
+                        parentUpdateFilter := bson.M{"_id": parentAlert.ID}
+                        parentUpdate := bson.M{
+                            "$push": bson.M{
+                                "worklogs": parentComment,
+                            },
+                            "$set": bson.M{
+                                "AlertStatus": "CLOSED",
+                            }}
+
+                        _, err = collection.UpdateOne(context.TODO(), parentUpdateFilter, parentUpdate)
+                        if err != nil {
+                            log.Printf("Error closing parent alert: %v", err)
+                        } else {
+                            log.Printf("Successfully closed parent alert %s as all children are closed", parentAlert.ID.Hex())
+                        }
+                    } else {
+                        log.Printf("Not all children are closed yet. Keeping parent alert open.")
+                    }
+                } else {
+                    log.Printf("Error fetching child alerts: %v", err)
+                }
+            }
+        }
+    } else {
+        log.Printf("Alert is not a grouped child. Grouped: %v", alert.Grouped)
     }
 
     c.JSON(http.StatusOK, newComment)
