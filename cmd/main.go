@@ -115,6 +115,10 @@ func main() {
         protected.GET("/v1/alerts/:alert_id/related-changes", handlers.GetRelatedChanges)
         protected.POST("/v1/alerts/:id/rca/trigger", handlers.TriggerAIRCA)
         
+        // Chatbot proxy endpoints (inject sessionId before forwarding to n8n)
+        protected.POST("/v1/chatbot", handlers.ChatbotProxy)
+        protected.POST("/v1/chatbot/stream", handlers.ChatbotStream)
+        
         protected.POST("/incidents/:id/feedback", handlers.AddFeedback) // NEW Feedback Endpoint
 
 		protected.GET("/resource", handlers.ProtectedResource)

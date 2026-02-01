@@ -12,6 +12,7 @@ type RCAGraphPayload struct {
 type RCAContext struct {
 	AlertID      string    `json:"alert_id"`
 	RootEntityID string    `json:"root_entity_id"`
+	SessionID    string    `json:"sessionId"`    // Incident ID used for Redis session in n8n
 	GeneratedAt  time.Time `json:"generated_at"`
 }
 

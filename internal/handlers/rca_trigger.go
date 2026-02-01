@@ -274,6 +274,7 @@ func TriggerAIRCA(c *gin.Context) {
 		RCAContext: models.RCAContext{
 			AlertID:      alert.AlertId,
 			RootEntityID: rootEntityID,
+			SessionID:    alert.AlertId, // Use incident ID as sessionId for Redis context in n8n
 			GeneratedAt:  time.Now(),
 		},
 		Nodes: nodes,
