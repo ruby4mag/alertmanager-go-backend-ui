@@ -233,6 +233,14 @@ Standard chatbot requests (init, follow-up questions)
 #### 2. `POST /api/v1/chatbot/stream`
 Streaming chatbot responses (SSE/Server-Sent Events)
 
+### 6. Interactive Actions (Human-in-the-Loop)
+The chatbot supports interactive elements (buttons, forms) to trigger external workflows (e.g., PagerDuty).
+- **Protocol Guide**: See `CHATBOT_INTERACTIVE_ACTIONS.md`
+- **Mechanism**:
+  - n8n sends `actions` array in JSON response.
+  - Frontend renders buttons/inputs.
+  - User interaction triggers POST to `/api/v1/chatbot` with specific `action` ID.
+  - Proxy forwards this to n8n for execution.
 Same sessionId injection logic, but handles streaming responses.
 
 ### Configuration
