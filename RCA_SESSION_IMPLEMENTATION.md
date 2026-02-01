@@ -178,12 +178,19 @@ Created a **backend proxy** (`/api/v1/chatbot`) that:
 1. Receives the chatbot request from the frontend
 2. Extracts the incident ID from `alert.alertid`
 3. Injects it as `sessionId` in the payload
-4. Forwards the modified request to n8n
-5. Returns n8n's response to the frontend
+4. **Enriches payload with RCA Graph Data** (if missing):
+   - Fetches the full alert details from DB
+   - Generates the **Entity Topology Graph** (Nodes with Alert/Change details + Edges)
+   - Note: Uses `BuildEntityGraph` to ensure `nodes` contain `alerts`, `changes`, `support_owner` lists.
+   - Injects it into `graph_data` field (and optionally `context.graph_data`)
+5. Forwards the modified request to n8n
+6. Returns n8n's response to the frontend
 
 ### Benefits
 - ✅ **No frontend changes required** (just change the endpoint URL)
 - ✅ **Centralized sessionId logic** in the backend
+- ✅ **Automatic Context Enrichment**: Chatbot always receives full graph data even if frontend doesn't send it
+- ✅ **Detailed Topology**: Graph nodes include associated alerts and changes for better RCA context
 - ✅ **Additional processing/validation** can be added easily
 - ✅ **Consistent sessionId format** across all RCA interactions
 
@@ -199,8 +206,8 @@ Standard chatbot requests (init, follow-up questions)
   "alert": {
     "alertid": "INC-2026-001",
     ...
-  },
-  "graph_data": {...}
+  }
+  // graph_data is missing!
 }
 ```
 
@@ -208,12 +215,18 @@ Standard chatbot requests (init, follow-up questions)
 ```json
 {
   "action": "init",
-  "sessionId": "INC-2026-001",  // ← Injected by proxy
+  "sessionId": "INC-2026-001",
   "alert": {
-    "alertid": "INC-2026-001",
-    ...
-  },
-  "graph_data": {...}
+      "alertid": "INC-2026-001",
+      ...
+      "graph_data": {  // ← Injected INSIDE alert
+         "root": "...",
+         "nodes": [
+            { "name": "...", "alerts": [...], "changes": [...] }
+         ],
+         "edges": [...]
+      }
+  }
 }
 ```
 

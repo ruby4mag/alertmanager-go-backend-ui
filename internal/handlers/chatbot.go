@@ -10,6 +10,10 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
+	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // ChatbotProxy handles chatbot requests and injects sessionId before forwarding to n8n
@@ -39,6 +43,49 @@ func ChatbotProxy(c *gin.Context) {
 	if sessionID != "" {
 		requestBody["sessionId"] = sessionID
 		log.Printf("Injected sessionId: %s into chatbot request", sessionID)
+
+		// Check if action is "init"
+		action, _ := requestBody["action"].(string)
+		
+		if action == "init" {
+			if alertMap, ok := requestBody["alert"].(map[string]interface{}); ok {
+				if _, hasGraphData := alertMap["graph_data"]; !hasGraphData {
+					log.Printf("Graph data missing in alert for init action, generating for alert: %s", sessionID)
+					
+					// 1. Fetch Alert
+					alertsCollection := db.GetCollection("alerts")
+					var alert models.DbAlert
+					
+					// Try to find by string ID first
+					objID, err := primitive.ObjectIDFromHex(sessionID)
+					if err == nil {
+						err = alertsCollection.FindOne(c.Request.Context(), bson.M{"_id": objID}).Decode(&alert)
+					}
+					
+					if err != nil {
+						err = alertsCollection.FindOne(c.Request.Context(), bson.M{"alertid": sessionID}).Decode(&alert)
+					}
+
+					if err == nil {
+						// 2. Build Graph
+						payload, err := BuildEntityGraph(alert.Entity)
+						if err == nil {
+							// 3. Inject into alert object
+							alertMap["graph_data"] = payload
+							// Re-assign to ensure map update is reflected (though map is ref type)
+							requestBody["alert"] = alertMap
+							
+							log.Printf("Successfully injected graph data into alert object via BuildEntityGraph")
+						} else {
+							log.Printf("Error building Entity graph: %v", err)
+						}
+					} else {
+						log.Printf("Error fetching alert for graph generation: %v", err)
+					}
+				}
+			}
+		}
+
 	} else {
 		log.Printf("Warning: Could not extract alert ID for sessionId")
 	}
@@ -77,26 +124,48 @@ func ChatbotProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	// Read the response from n8n
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Error reading n8n response: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read n8n response"})
-		return
+	// Set response headers from n8n response
+	for key, values := range resp.Header {
+		for _, value := range values {
+			c.Header(key, value)
+		}
+	}
+	
+	// Set status code
+	c.Status(resp.StatusCode)
+
+	// Stream the response directly without buffering
+	// This enables real-time streaming to the frontend
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		log.Printf("Warning: ResponseWriter doesn't support flushing")
 	}
 
-	// Forward the response back to the client
-	// Check if the response is JSON
-	var jsonResponse interface{}
-	if err := json.Unmarshal(responseBody, &jsonResponse); err == nil {
-		// It's valid JSON, send it as JSON
-		c.JSON(resp.StatusCode, jsonResponse)
-	} else {
-		// Not JSON, send as plain text
-		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+	buffer := make([]byte, 4096) // 4KB buffer for efficient streaming
+	for {
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			// Write chunk to response
+			if _, writeErr := c.Writer.Write(buffer[:n]); writeErr != nil {
+				log.Printf("Error writing chunk to client: %v", writeErr)
+				return
+			}
+			
+			// Flush immediately to send chunk to client
+			if ok {
+				flusher.Flush()
+			}
+		}
+		
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Error reading n8n response stream: %v", err)
+			}
+			break
+		}
 	}
 
-	log.Printf("Chatbot request forwarded to n8n with sessionId: %s, status: %d", sessionID, resp.StatusCode)
+	log.Printf("Chatbot request streamed to client with sessionId: %s, status: %d", sessionID, resp.StatusCode)
 }
 
 // ChatbotStream handles streaming chatbot responses (for SSE/streaming)
@@ -129,6 +198,50 @@ func ChatbotStream(c *gin.Context) {
 		log.Printf("Warning: No sessionId found in streaming request")
 	} else {
 		log.Printf("Processing streaming request with sessionId: %s", sessionID)
+
+
+		// Check if action is "init"
+		action, _ := requestBody["action"].(string)
+		
+		if action == "init" {
+			if alertMap, ok := requestBody["alert"].(map[string]interface{}); ok {
+				if _, hasGraphData := alertMap["graph_data"]; !hasGraphData {
+					log.Printf("Graph data missing in alert for streaming init action, generating for alert: %s", sessionID)
+					
+					// 1. Fetch Alert
+					alertsCollection := db.GetCollection("alerts")
+					var alert models.DbAlert
+					
+					// Try to find by string ID first
+					objID, err := primitive.ObjectIDFromHex(sessionID)
+					if err == nil {
+						err = alertsCollection.FindOne(c.Request.Context(), bson.M{"_id": objID}).Decode(&alert)
+					}
+					
+					// If not found or error, try finding by alertid field
+					if err != nil {
+						err = alertsCollection.FindOne(c.Request.Context(), bson.M{"alertid": sessionID}).Decode(&alert)
+					}
+
+					if err == nil {
+						// 2. Build Graph
+						payload, err := BuildEntityGraph(alert.Entity)
+						if err == nil {
+							// 3. Inject into alert object
+							alertMap["graph_data"] = payload
+							// Re-assign to ensure map update is reflected
+							requestBody["alert"] = alertMap
+							
+							log.Printf("Successfully injected graph data into alert object via BuildEntityGraph in streaming request")
+						} else {
+							log.Printf("Error building Entity graph: %v", err)
+						}
+					} else {
+						log.Printf("Error fetching alert for graph generation: %v", err)
+					}
+				}
+			}
+		}
 	}
 
 	// Marshal the modified request body
@@ -182,4 +295,12 @@ func ChatbotStream(c *gin.Context) {
 	})
 
 	log.Printf("Streaming chatbot request completed for sessionId: %s", sessionID)
+}
+
+// Helper to convert alert struct to map
+func alertMapFromStruct(alert models.DbAlert) map[string]interface{} {
+	b, _ := json.Marshal(alert)
+	var m map[string]interface{}
+	json.Unmarshal(b, &m)
+	return m
 }
