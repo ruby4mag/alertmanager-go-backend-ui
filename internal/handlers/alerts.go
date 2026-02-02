@@ -320,7 +320,7 @@ func Clear(c *gin.Context) {
 func Notify(c *gin.Context) {
     noderedEndpoint := os.Getenv("NODERED_ENDPOINT")
     if noderedEndpoint == "" {
-        noderedEndpoint = "http://192.168.1.201:1880/notifications"
+        noderedEndpoint = "http://localhost:1880/notifications"
     }
 
     id := c.Param("id")

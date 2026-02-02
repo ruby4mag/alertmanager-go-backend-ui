@@ -29,7 +29,7 @@ func main() {
     // Init Neo4j
     neo4jURI := os.Getenv("NEO4J_URI")
     if neo4jURI == "" {
-        neo4jURI = "bolt://192.168.1.201:7687"
+        neo4jURI = "bolt://localhost:7687"
     }
     neo4jUser := os.Getenv("NEO4J_USER")
     if neo4jUser == "" {
@@ -43,7 +43,7 @@ func main() {
 
 	noderedEndpoint := os.Getenv("NODERED_ENDPOINT")
 	if noderedEndpoint == "" {
-		noderedEndpoint = "http://192.168.1.201:1880/notifications"
+		noderedEndpoint = "http://localhost:1880/notifications"
 	}
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{

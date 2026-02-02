@@ -21,7 +21,7 @@ func ChatbotProxy(c *gin.Context) {
 	// Get n8n webhook URL from environment or use default
 	n8nWebhookURL := os.Getenv("N8N_CHAT_WEBHOOK_URL")
 	if n8nWebhookURL == "" {
-		n8nWebhookURL = "http://192.168.1.201:5678/webhook/alert-chat"
+		n8nWebhookURL = "http://localhost:5678/webhook/alert-chat"
 	}
 
 	// Parse the incoming request body
@@ -173,7 +173,7 @@ func ChatbotStream(c *gin.Context) {
 	// Get n8n webhook URL from environment or use default
 	n8nWebhookURL := os.Getenv("N8N_CHAT_WEBHOOK_URL")
 	if n8nWebhookURL == "" {
-		n8nWebhookURL = "http://192.168.1.201:5678/webhook/alert-chat"
+		n8nWebhookURL = "http://localhost:5678/webhook/alert-chat"
 	}
 
 	// Parse the incoming request body
