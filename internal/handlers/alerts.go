@@ -195,7 +195,7 @@ func Clear(c *gin.Context) {
             "worklogs": newComment,
         },
         "$set": bson.M{
-            "AlertStatus": "CLOSED",
+            "alertstatus": "CLOSED",
         }}
     _, err = collection.UpdateOne(context.TODO(), filter, update)
     if err != nil {
@@ -218,7 +218,7 @@ func Clear(c *gin.Context) {
                 "worklogs": childComment,
             },
             "$set": bson.M{
-                "AlertStatus": "CLOSED",
+                "alertstatus": "CLOSED",
             }}
 
         _, err = collection.UpdateMany(context.TODO(), childFilter, childUpdate)
@@ -288,7 +288,7 @@ func Clear(c *gin.Context) {
                                 "worklogs": parentComment,
                             },
                             "$set": bson.M{
-                                "AlertStatus": "CLOSED",
+                                "alertstatus": "CLOSED",
                             }}
 
                         _, err = collection.UpdateOne(context.TODO(), parentUpdateFilter, parentUpdate)
@@ -299,6 +299,11 @@ func Clear(c *gin.Context) {
                         }
                     } else {
                         log.Printf("Not all children are closed yet. Keeping parent alert open.")
+                        
+                        // Recalculate parent priority as active children set changed
+                        if err := RecalculateParentPriority(ctx, collection, parentAlert.ID); err != nil {
+                             log.Printf("Failed to recalculate parent priority: %v", err)
+                        }
                     }
                 } else {
                     log.Printf("Error fetching child alerts: %v", err)

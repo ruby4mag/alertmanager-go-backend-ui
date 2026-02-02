@@ -224,6 +224,9 @@ func groupAlerts(ctx context.Context, col *mongo.Collection, match models.DbAler
         })
         if err != nil { return err }
 
+        // Recalculate Parent Priority now that new child is added
+        _ = RecalculateParentPriority(ctx, col, match.ID)
+
         // 2. Update Child (Current)
         _, err = col.UpdateOne(ctx, bson.M{"_id": current.ID}, bson.M{
             "$set": bson.M{
@@ -249,21 +252,31 @@ func groupAlerts(ctx context.Context, col *mongo.Collection, match models.DbAler
     }
 
     // Scenario C: Match is a standalone alert. Create a NEW Parent.
+    
+    // Calculate initial priority (Min val = Max urgency)
+    p1 := getPriorityValue(match.AlertPriority)
+    p2 := getPriorityValue(current.AlertPriority)
+    bestP := p1
+    if p2 < p1 { bestP = p2 }
+    parentPriority := getPriorityString(bestP)
+
     // Create Parent Alert
     parentID := primitive.NewObjectID()
+
     parentAlert := models.DbAlert{
         ID: parentID,
         AlertId: fmt.Sprintf("GRP-%d", time.Now().Unix()),
         AlertSummary: fmt.Sprintf("Group: %s (%s)", rule.GroupName, current.AlertSummary),
         Entity: "Multiple",
-        Severity: match.Severity, // Inherit or calc max
+        Severity: match.Severity, 
+        AlertPriority: parentPriority, // Set Priority
         Parent: true,
         Grouped: true,
         GroupAlerts: []primitive.ObjectID{match.ID, current.ID},
         GroupingReason: reason,
         AlertStatus: "OPEN",
-        AlertFirstTime: match.AlertFirstTime, // Earliest
-        AlertLastTime: current.AlertLastTime, // Latest
+        AlertFirstTime: match.AlertFirstTime,
+        AlertLastTime: current.AlertLastTime,
     }
 
     _, err := col.InsertOne(ctx, parentAlert)
@@ -281,4 +294,65 @@ func groupAlerts(ctx context.Context, col *mongo.Collection, match models.DbAler
     _, err = col.UpdateOne(ctx, bson.M{"_id": current.ID}, updateChild)
 
     return err
+}
+
+// RecalculateParentPriority updates the parent's priority based on its OPEN children
+func RecalculateParentPriority(ctx context.Context, col *mongo.Collection, parentID primitive.ObjectID) error {
+    var parent models.DbAlert
+    err := col.FindOne(ctx, bson.M{"_id": parentID}).Decode(&parent)
+    if err != nil { return err }
+
+    // Find all OPEN child alerts
+    filter := bson.M{
+        "_id": bson.M{"$in": parent.GroupAlerts},
+        "alertstatus": bson.M{"$ne": "CLOSED"},
+    }
+    
+    cursor, err := col.Find(ctx, filter)
+    if err != nil { return err }
+    defer cursor.Close(ctx)
+
+    var children []models.DbAlert
+    if err := cursor.All(ctx, &children); err != nil { return err }
+
+    if len(children) == 0 {
+        // No open children? Parent might be closing soon or just empty. 
+        // Leave as is or set to lowest? keeping as is is safer.
+        return nil
+    }
+
+    bestP := 5 // Start lower than P4
+    for _, child := range children {
+        p := getPriorityValue(child.AlertPriority)
+        if p < bestP {
+            bestP = p
+        }
+    }
+
+    newPriority := getPriorityString(bestP)
+    
+    if newPriority != parent.AlertPriority {
+        _, err = col.UpdateOne(ctx, bson.M{"_id": parentID}, bson.M{
+            "$set": bson.M{"alertpriority": newPriority},
+        })
+    }
+    return err
+}
+
+func getPriorityValue(p string) int {
+    switch strings.ToUpper(p) {
+    case "P0": return 0
+    case "P1": return 1
+    case "P2": return 2
+    case "P3": return 3
+    case "P4": return 4
+    }
+    return 5 // Default low priority for unknown
+}
+
+func getPriorityString(v int) string {
+    if v >= 0 && v <= 4 {
+        return fmt.Sprintf("P%d", v)
+    }
+    return "P4"
 }
