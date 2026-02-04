@@ -63,6 +63,10 @@ type DbAlert struct {
 	PagerDutyHtmlUrl	string			`json:"pagerduty_html_url,omitempty" bson:"pagerduty_html_url,omitempty"`
 	PagerDutyService	string			`json:"pagerduty_service,omitempty" bson:"pagerduty_service,omitempty"`
 	PagerDutyEscalationPolicy	string	`json:"pagerduty_escalation_policy,omitempty" bson:"pagerduty_escalation_policy,omitempty"`
+	Major_incident_number	int				`json:"major_incident_number,omitempty" bson:"major_incident_number,omitempty"`
+	Major_incident_id		string			`json:"major_incident_id,omitempty" bson:"major_incident_id,omitempty"`
+	Major_incident_url		string			`json:"major_incident_url,omitempty" bson:"major_incident_url,omitempty"`
+	Major_incident_status	string			`json:"major_incident_status,omitempty" bson:"major_incident_status,omitempty"`
 }
 
 type GroupingReason struct {

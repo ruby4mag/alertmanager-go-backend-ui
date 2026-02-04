@@ -297,6 +297,96 @@ func ChatbotStream(c *gin.Context) {
 	log.Printf("Streaming chatbot request completed for sessionId: %s", sessionID)
 }
 
+// ChatbotAction handles UI actions from the chatbot and forwards them to n8n
+func ChatbotAction(c *gin.Context) {
+	log.Printf("Received chatbot action request")
+	n8nActionWebhookURL := os.Getenv("N8N_ACTION_WEBHOOK_URL")
+	if n8nActionWebhookURL == "" {
+		n8nActionWebhookURL = "http://localhost:5678/webhook/alert-action"
+	}
+
+	var payload map[string]interface{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Capture user who triggered the action
+	username, _ := c.Get("username")
+	payload["user"] = username
+
+	modifiedBody, err := json.Marshal(payload)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
+		return
+	}
+
+	req, err := http.NewRequest("POST", n8nActionWebhookURL, bytes.NewBuffer(modifiedBody))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error forwarding action to n8n: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to reach n8n"})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Post-processing: If creation was successful, update the alert in MongoDB
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		var n8nResponse struct {
+			PagerDutyResponse struct {
+				Incident struct {
+					IncidentNumber int    `json:"incident_number"`
+					ID            string `json:"id"`
+					HTMLURL       string `json:"html_url"`
+					Status        string `json:"status"`
+				} `json:"incident"`
+			} `json:"pagerdutyResponse"`
+		}
+
+		if err := json.Unmarshal(body, &n8nResponse); err == nil {
+			inc := n8nResponse.PagerDutyResponse.Incident
+			if inc.ID != "" {
+				// We have a successful PagerDuty incident creation
+				alertIdStr, _ := payload["alertId"].(string)
+				if alertIdStr != "" {
+					log.Printf("Updating alert %s with Major Incident: %d (%s)", alertIdStr, inc.IncidentNumber, inc.Status)
+					
+					alertsCollection := db.GetCollection("alerts")
+					update := bson.M{
+						"$set": bson.M{
+							"major_incident_number": inc.IncidentNumber,
+							"major_incident_id":     inc.ID,
+							"major_incident_url":    inc.HTMLURL,
+							"major_incident_status": inc.Status,
+						},
+					}
+
+					// Try updating by ObjectID or string alertid
+					objID, err := primitive.ObjectIDFromHex(alertIdStr)
+					if err == nil {
+						alertsCollection.UpdateOne(c.Request.Context(), bson.M{"_id": objID}, update)
+					} else {
+						alertsCollection.UpdateOne(c.Request.Context(), bson.M{"alertid": alertIdStr}, update)
+					}
+				}
+			}
+		} else {
+			log.Printf("Failed to unmarshal n8n response for post-processing: %v", err)
+		}
+	}
+
+	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+}
+
 // Helper to convert alert struct to map
 func alertMapFromStruct(alert models.DbAlert) map[string]interface{} {
 	b, _ := json.Marshal(alert)

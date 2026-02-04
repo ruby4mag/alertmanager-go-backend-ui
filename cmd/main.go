@@ -118,6 +118,7 @@ func main() {
         // Chatbot proxy endpoints (inject sessionId before forwarding to n8n)
         protected.POST("/v1/chatbot", handlers.ChatbotProxy)
         protected.POST("/v1/chatbot/stream", handlers.ChatbotStream)
+        protected.POST("/v1/chatbot/action", handlers.ChatbotAction)
         
         protected.POST("/incidents/:id/feedback", handlers.AddFeedback) // NEW Feedback Endpoint
 
