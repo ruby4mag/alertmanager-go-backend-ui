@@ -35,6 +35,7 @@ type AlertDetail struct {
 // Update Node struct definition
 type Node struct {
 	Name         string           `json:"name"`
+	Label        string           `json:"label,omitempty"`
 	HasAlert     bool             `json:"has_alert"`
 	Severity     string           `json:"severity,omitempty"`
 	SupportOwner string           `json:"support_owner,omitempty"`
@@ -265,6 +266,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	allNodes := map[string]struct{}{}
 	idToName := map[string]string{}
 	nodeProps := map[string]string{}
+	nodeLabels := map[string]string{}
 
 	for _, n := range rawNodes {
 		node, ok := n.(dbtype.Node)
@@ -276,6 +278,9 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 
 				if owner, ok := node.Props["support_owner"].(string); ok {
 					nodeProps[nameStr] = owner
+				}
+				if len(node.Labels) > 0 {
+					nodeLabels[nameStr] = node.Labels[0]
 				}
 			}
 		}
@@ -375,7 +380,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	}
 
 	finalEdges := uniqueEdges(filteredEdges)
-	finalNodes := uniqueNodes(include, alertMap, changeMap, severityMap, nodeProps) // Passed changeMap
+	finalNodes := uniqueNodes(include, alertMap, changeMap, severityMap, nodeProps, nodeLabels) // Passed nodeLabels
 
 	return &GraphResponse{
 		Root:  root,
@@ -384,7 +389,7 @@ func BuildEntityGraph(root string) (*GraphResponse, error) {
 	}, nil
 }
 
-func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail, changeMap map[string][]models.RelatedChange, severityMap map[string]string, nodeProps map[string]string) []Node {
+func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail, changeMap map[string][]models.RelatedChange, severityMap map[string]string, nodeProps map[string]string, nodeLabels map[string]string) []Node {
 	out := []Node{}
 
 	for name := range include {
@@ -392,9 +397,11 @@ func uniqueNodes(include map[string]struct{}, alertMap map[string][]AlertDetail,
 		changes := changeMap[name]
 		sev := severityMap[name]
 		owner := nodeProps[name]
+		label := nodeLabels[name]
 
 		out = append(out, Node{
 			Name:         name,
+			Label:        label,
 			HasAlert:     len(alerts) > 0,
 			Severity:     sev,
 			Alerts:       alerts,
