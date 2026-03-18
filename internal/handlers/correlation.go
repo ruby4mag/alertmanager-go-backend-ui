@@ -11,7 +11,6 @@ import (
 	"github.com/ruby4mag/alertmanager-go-backend-ui/internal/db"
     "github.com/ruby4mag/alertmanager-go-backend-ui/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
@@ -28,8 +27,8 @@ type AlertDetail struct {
 	Severity  string `json:"severity,omitempty"`
 	Priority  string `json:"priority,omitempty"`
 	AlertID   string `json:"alert_id,omitempty"`
-	FirstSeen string `json:"first_seen,omitempty"`
-	LastSeen  string `json:"last_seen,omitempty"`
+	FirstSeen string `json:"alertfirsttime,omitempty"` // Updated JSON tag
+	LastSeen  string `json:"alertlasttime,omitempty"`  // Updated JSON tag
 }
 
 // Update Node struct definition
@@ -159,42 +158,28 @@ func fetchNodeAlerts(node string) ([]AlertDetail, string) {
 	highestSeverity := ""
 
 	for cursor.Next(ctx) {
-		var doc bson.M
-		if err := cursor.Decode(&doc); err != nil {
+		var dbAlert models.DbAlert
+		if err := cursor.Decode(&dbAlert); err != nil {
 			continue
 		}
 
-		getString := func(key string) string {
-			if v, ok := doc[key].(string); ok {
-				return v
-			}
-			return ""
-		}
-
-		parseTime := func(field string) string {
-			m1, ok := doc[field].(bson.M)
-			if !ok {
-				return ""
-			}
-			m2, ok := m1["time"].(bson.M)
-			if !ok {
-				return ""
-			}
-			if dt, ok := m2["$date"].(primitive.DateTime); ok {
-				return dt.Time().Format(time.RFC3339)
-			}
-			return ""
-		}
-
 		alert := AlertDetail{
-			Summary:   getString("alertsummary"),
-			Notes:     getString("alertnotes"),
-			Status:    getString("alertstatus"),
-			Severity:  getString("severity"),
-			Priority:  getString("alertpriority"),
-			AlertID:   getString("alertid"),
-			FirstSeen: parseTime("alertfirsttime"),
-			LastSeen:  parseTime("alertlasttime"),
+			Summary:   dbAlert.AlertSummary,
+			Notes:     dbAlert.AlertNotes,
+			Status:    dbAlert.AlertStatus,
+			Severity:  dbAlert.Severity,
+			Priority:  dbAlert.AlertPriority,
+			AlertID:   dbAlert.AlertId,
+			FirstSeen: dbAlert.AlertFirstTime.Time.Format(time.RFC3339),
+			LastSeen:  dbAlert.AlertLastTime.Time.Format(time.RFC3339),
+		}
+
+		// Handle empty/zero times if needed (though DbAlert usually brings them)
+		if dbAlert.AlertFirstTime.Time.IsZero() {
+			alert.FirstSeen = ""
+		}
+		if dbAlert.AlertLastTime.Time.IsZero() {
+			alert.LastSeen = ""
 		}
 
 		alerts = append(alerts, alert)

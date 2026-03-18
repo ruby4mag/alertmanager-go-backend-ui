@@ -112,6 +112,11 @@ func main() {
         protected.GET("/v1/changes/risk", handlers.ListChangesWithRisk)
         protected.GET("/v1/changes/:change_id", handlers.GetChangeDetail)
 
+        // Dashboard Analytics
+        protected.GET("/v1/dashboard/stats", handlers.GetDashboardStats)
+        protected.GET("/v1/dashboard/heatmap", handlers.GetServiceHeatmap)
+        protected.GET("/v1/dashboard/trends", handlers.GetAlertTrends)
+
         protected.GET("/v1/alerts/:alert_id/related-changes", handlers.GetRelatedChanges)
         protected.POST("/v1/alerts/:id/rca/trigger", handlers.TriggerAIRCA)
         
