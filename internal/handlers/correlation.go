@@ -146,6 +146,7 @@ func fetchNodeAlerts(node string) ([]AlertDetail, string) {
 			{"entity": node},
 			{"host": node},
 		},
+		"parent": bson.M{"$ne": true}, // Exclude parent alerts
 	}
 
 	cursor, err := col.Find(ctx, filter)
